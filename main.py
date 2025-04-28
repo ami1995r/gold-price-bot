@@ -23,6 +23,12 @@ def get_price_change_emoji(change_percent):
         return "🔴 ({:.2f}%)".format(change_percent)
     return "⚪ (0%)"
 
+def find_item_by_symbol(items, symbol):
+    for item in items:
+        if item['symbol'] == symbol:
+            return item
+    return None
+
 def get_prices():
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
@@ -31,13 +37,18 @@ def get_prices():
         data = response.json()
         print(data)
 
-    
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
+        
+        # دسترسی به داده‌های مورد نیاز با استفاده از تابع find_item_by_symbol
+        gold_18k = find_item_by_symbol(data['gold'], 'IR_GOLD_18K')
+        if not gold_18k:
+            gold_18k = {'price': 'N/A', 'change_percent': 0}
         
         return {
             'update_time': update_time,
             'gold_ounce': next((item for item in data['gold'] if item['symbol'] == 'XAUUSD'), 
-                             {'price': 'N/A', 'change_percent': 0}),
+                               {'price': 'N/A', 'change_percent': 0}),
+            'gold_18k': gold_18k,  # اضافه کردن طلای ۱۸ عیار
             # ... (بقیه آیتم‌ها مانند کد شما)
         }
     except Exception as e:
@@ -65,6 +76,7 @@ def create_message(prices):
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
 <b>🏆 طلا</b>
+
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {int(prices['gold_18k']['price']):,} تومان
 {get_price_change_emoji(prices['gold_24k']['change_percent'])} 24 عیار: {int(prices['gold_24k']['price']):,} تومان
