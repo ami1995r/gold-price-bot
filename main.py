@@ -3,10 +3,9 @@ from datetime import datetime
 import jdatetime
 import time
 import os
-from server import keep_alive
 
 # ==================== تنظیمات ایمن ====================
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از Secrets استفاده کن
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از متغیرهای محیطی Railway
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
 UPDATE_INTERVAL = 300  # هر ۵ دقیقه
@@ -35,7 +34,7 @@ def get_prices():
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
-        print(data)
+        print("داده‌های API:", data)
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
 
@@ -61,13 +60,16 @@ def get_prices():
 def send_message(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        print(f"در حال ارسال پیام به {CHANNEL_ID}")
         response = requests.post(url, json={
             'chat_id': CHANNEL_ID,
             'text': text,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True
         })
+        print(f"پاسخ تلگرام: {response.text}")
         response.raise_for_status()
+        print("✅ پیام با موفقیت ارسال شد")
     except Exception as e:
         print(f"❌ ارسال پیام ناموفق: {e}")
 
@@ -79,7 +81,6 @@ def create_message(prices):
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
 <b>🏆 طلا</b>
-
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
 
@@ -107,8 +108,6 @@ def format_price(price):
         return "نامشخص"
 
 def main():
-    keep_alive()  # فعال نگه داشتن ربات روی ریل‌وی
-
     while True:
         prices = get_prices()
         if prices:
