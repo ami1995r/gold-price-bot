@@ -6,10 +6,10 @@ import os
 from server import keep_alive
 
 # ==================== تنظیمات ایمن ====================
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از Secrets استفاده می‌کنیم
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از Secrets استفاده کن
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
-UPDATE_INTERVAL = 300  # 5 دقیقه (ثانیه)
+UPDATE_INTERVAL = 300  # هر ۵ دقیقه
 # =====================================================
 
 def get_jalali_date():
@@ -38,18 +38,21 @@ def get_prices():
         print(data)
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
-        
-        # دسترسی به داده‌های مورد نیاز با استفاده از تابع find_item_by_symbol
-        gold_18k = find_item_by_symbol(data['gold'], 'IR_GOLD_18K')
-        if not gold_18k:
-            gold_18k = {'price': 'N/A', 'change_percent': 0}
-        
+
         return {
             'update_time': update_time,
-            'gold_ounce': next((item for item in data['gold'] if item['symbol'] == 'XAUUSD'), 
-                               {'price': 'N/A', 'change_percent': 0}),
-            'gold_18k': gold_18k,  # اضافه کردن طلای ۱۸ عیار
-            # ... (بقیه آیتم‌ها مانند کد شما)
+            'gold_ounce': find_item_by_symbol(data['gold'], 'XAUUSD') or {'price': 'N/A', 'change_percent': 0},
+            'gold_18k': find_item_by_symbol(data['gold'], 'IR_GOLD_18K') or {'price': 'N/A', 'change_percent': 0},
+            'coin_new': find_item_by_symbol(data['coin'], 'COIN_NEW') or {'price': 'N/A', 'change_percent': 0},
+            'coin_old': find_item_by_symbol(data['coin'], 'COIN_OLD') or {'price': 'N/A', 'change_percent': 0},
+            'half_coin': find_item_by_symbol(data['coin'], 'COIN_HALF') or {'price': 'N/A', 'change_percent': 0},
+            'quarter_coin': find_item_by_symbol(data['coin'], 'COIN_QUARTER') or {'price': 'N/A', 'change_percent': 0},
+            'gram_coin': find_item_by_symbol(data['coin'], 'COIN_GRAM') or {'price': 'N/A', 'change_percent': 0},
+            'usd': find_item_by_symbol(data['currency'], 'USD') or {'price': 'N/A', 'change_percent': 0},
+            'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
+            'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
+            'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
+            'usdt': find_item_by_symbol(data['currency'], 'USDT') or {'price': 'N/A', 'change_percent': 0},
         }
     except Exception as e:
         print(f"❌ خطا در دریافت داده: {e}")
@@ -78,32 +81,39 @@ def create_message(prices):
 <b>🏆 طلا</b>
 
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
-{get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {int(prices['gold_18k']['price']):,} تومان
+{get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
 
 <b>🏅 سکه</b>
-{get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {int(prices['coin_new']['price']):,} تومان
-{get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {int(prices['coin_old']['price']):,} تومان
-{get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {int(prices['half_coin']['price']):,} تومان
-{get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {int(prices['quarter_coin']['price']):,} تومان
-{get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {int(prices['gram_coin']['price']):,} تومان
+{get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
+{get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
+{get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
+{get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
+{get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
 
 <b>💱 ارزها</b>
-{get_price_change_emoji(prices['usd']['change_percent'])} دلار: {int(prices['usd']['price']):,} تومان
-{get_price_change_emoji(prices['eur']['change_percent'])} یورو: {int(prices['eur']['price']):,} تومان
-{get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {int(prices['gbp']['price']):,} تومان
-{get_price_change_emoji(prices['aed']['change_percent'])} درهم: {int(prices['aed']['price']):,} تومان
-{get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {int(prices['usdt']['price']):,} تومان
+{get_price_change_emoji(prices['usd']['change_percent'])} دلار: {format_price(prices['usd']['price'])} تومان
+{get_price_change_emoji(prices['eur']['change_percent'])} یورو: {format_price(prices['eur']['price'])} تومان
+{get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {format_price(prices['gbp']['price'])} تومان
+{get_price_change_emoji(prices['aed']['change_percent'])} درهم: {format_price(prices['aed']['price'])} تومان
+{get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {format_price(prices['usdt']['price'])} تومان
 
 📢 @{CHANNEL_ID.replace('@', '')}
 """
 
+def format_price(price):
+    try:
+        return f"{int(price):,}"
+    except:
+        return "نامشخص"
+
 def main():
-    keep_alive()  # فعال نگه داشتن بات
-    
+    keep_alive()  # فعال نگه داشتن ربات روی ریل‌وی
+
     while True:
         prices = get_prices()
         if prices:
-            send_message(create_message(prices))
+            message = create_message(prices)
+            send_message(message)
             print(f"✅ قیمت‌ها در {datetime.now().strftime('%H:%M')} ارسال شدند")
         else:
             print("❌ خطا در دریافت قیمت‌ها")
@@ -111,7 +121,6 @@ def main():
         time.sleep(UPDATE_INTERVAL)
 
 if __name__ == "__main__":
-    # نصب خودکار کتابخانه‌ها
     try:
         import jdatetime
     except ImportError:
