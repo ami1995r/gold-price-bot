@@ -38,21 +38,24 @@ def get_prices():
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
 
-        return {
+        # گرفتن داده‌ها با نمادهای جدید
+        prices = {
             'update_time': update_time,
             'gold_ounce': find_item_by_symbol(data['gold'], 'XAUUSD') or {'price': 'N/A', 'change_percent': 0},
             'gold_18k': find_item_by_symbol(data['gold'], 'IR_GOLD_18K') or {'price': 'N/A', 'change_percent': 0},
-            'coin_new': find_item_by_symbol(data['coin'], 'COIN_NEW') or {'price': 'N/A', 'change_percent': 0},
-            'coin_old': find_item_by_symbol(data['coin'], 'COIN_OLD') or {'price': 'N/A', 'change_percent': 0},
-            'half_coin': find_item_by_symbol(data['coin'], 'COIN_HALF') or {'price': 'N/A', 'change_percent': 0},
-            'quarter_coin': find_item_by_symbol(data['coin'], 'COIN_QUARTER') or {'price': 'N/A', 'change_percent': 0},
-            'gram_coin': find_item_by_symbol(data['coin'], 'COIN_GRAM') or {'price': 'N/A', 'change_percent': 0},
+            'coin_new': find_item_by_symbol(data['gold'], 'IR_COIN_BAHAR') or {'price': 'N/A', 'change_percent': 0},
+            'coin_old': find_item_by_symbol(data['gold'], 'IR_COIN_EMAMI') or {'price': 'N/A', 'change_percent': 0},
+            'half_coin': find_item_by_symbol(data['gold'], 'IR_COIN_HALF') or {'price': 'N/A', 'change_percent': 0},
+            'quarter_coin': find_item_by_symbol(data['gold'], 'IR_COIN_QUARTER') or {'price': 'N/A', 'change_percent': 0},
+            'gram_coin': find_item_by_symbol(data['gold'], 'IR_COIN_1G') or {'price': 'N/A', 'change_percent': 0},
             'usd': find_item_by_symbol(data['currency'], 'USD') or {'price': 'N/A', 'change_percent': 0},
             'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
             'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
             'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
-            'usdt': find_item_by_symbol(data['currency'], 'USDT') or {'price': 'N/A', 'change_percent': 0},
+            'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
+
+        return prices
     except Exception as e:
         print(f"❌ خطا در دریافت داده: {e}")
         return None
@@ -103,7 +106,7 @@ def create_message(prices):
 
 def format_price(price):
     try:
-        return f"{int(price):,}"
+        return f"{int(float(price)):,}"
     except:
         return "نامشخص"
 
