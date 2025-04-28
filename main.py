@@ -79,7 +79,6 @@ def create_message(prices):
 
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {int(prices['gold_18k']['price']):,} تومان
-{get_price_change_emoji(prices['gold_24k']['change_percent'])} 24 عیار: {int(prices['gold_24k']['price']):,} تومان
 
 <b>🏅 سکه</b>
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {int(prices['coin_new']['price']):,} تومان
