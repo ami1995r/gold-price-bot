@@ -167,14 +167,14 @@ def send_end_notification():
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
     if change_percent > CHANGE_THRESHOLD:
-        return "🚀 (+{:.2f}%)".format(change_percent)
+        return "🔺 (+{:.2f}%)".format(change_percent)
     elif change_percent > 0:
-        return "📈 (+{:.2f}%)".format(change_percent)
+        return "⬆️ (+{:.2f}%)".format(change_percent)
     elif change_percent < -CHANGE_THRESHOLD:
-        return "⚠️ ({:.2f}%)".format(change_percent)
+        return "🔻 ({:.2f}%)".format(change_percent)
     elif change_percent < 0:
-        return "📉 ({:.2f}%)".format(change_percent)
-    return "⚖️ (0%)"
+        return "⬇️ ({:.2f}%)".format(change_percent)
+    return "➖ (0%)"
 
 def find_item_by_symbol(items, symbol):
     for item in items:
@@ -278,30 +278,30 @@ def send_message(text):
         print(f"❌ ارسال پیام ناموفق: {e}")
 
 def create_message(prices):
-    """ایجاد پیام با قالب گرافیکی"""
+    """ایجاد پیام بدون خطوط جداکننده و با ترتیب جدید"""
     return f"""
 📅 <b>تاریخ: {get_jalali_date()}</b> | ⏰ <b>ساعت: {prices['update_time']}</b>
-───────────────────────
+
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
 <b>🏆 طلا</b>
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
-───────────────────────
+
 <b>🏅 سکه</b>
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
 {get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
 {get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
 {get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
-───────────────────────
+
 <b>💱 ارزها</b>
 {get_price_change_emoji(prices['usd']['change_percent'])} دلار: {format_price(prices['usd']['price'])} تومان
+{get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {format_price(prices['usdt']['price'])} تومان
 {get_price_change_emoji(prices['eur']['change_percent'])} یورو: {format_price(prices['eur']['price'])} تومان
 {get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {format_price(prices['gbp']['price'])} تومان
 {get_price_change_emoji(prices['aed']['change_percent'])} درهم: {format_price(prices['aed']['price'])} تومان
-{get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {format_price(prices['usdt']['price'])} تومان
-───────────────────────
+
 📢 @{CHANNEL_ID.replace('@', '')}
 """
 
