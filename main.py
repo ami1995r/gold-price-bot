@@ -8,19 +8,55 @@ import os
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از متغیرهای محیطی Railway
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
-UPDATE_INTERVAL = 300  # هر ۵ دقیقه
+UPDATE_INTERVAL = 1800  # هر 30 دقیقه (1800 ثانیه)
+CHECK_INTERVAL = 300    # هر 5 دقیقه چک کردن زمان (برای خارج از بازه)
+START_HOUR = 11         # ساعت شروع آپدیت (11 صبح)
+END_HOUR = 20           # ساعت پایان آپدیت (8 شب)
+CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت برای آپدیت فوری (2%)
+MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله بین آپدیت‌های فوری (5 دقیقه)
 # =====================================================
+
+# لیست تعطیلات رسمی ثابت (به تاریخ شمسی: ماه/روز)
+HOLIDAYS = [
+    "01/01",  # 1 فروردین (نوروز)
+    "01/02",  # 2 فروردین (نوروز)
+    "01/03",  # 3 فروردین (نوروز)
+    "01/04",  # 4 فروردین (نوروز)
+    "01/12",  # 12 فروردین (روز جمهوری اسلامی)
+    "01/13",  # 13 فروردین (سیزده‌به‌در)
+    "03/14",  # 14 خرداد (رحلت امام خمینی)
+    "03/15",  # 15 خرداد (قیام 15 خرداد)
+    "11/22",  # 22 بهمن (پیروزی انقلاب)
+]
+
+# ذخیره قیمت‌های قبلی و زمان آخرین آپدیت فوری
+last_prices = None
+last_emergency_update = 0
 
 def get_jalali_date():
     return jdatetime.datetime.now().strftime("%Y/%m/%d")
 
+def is_holiday():
+    """چک کردن اینکه امروز تعطیل است یا نه"""
+    today = jdatetime.datetime.now()
+    if today.weekday() == 4:  # در jdatetime، 4 = جمعه
+        return True
+    month_day = today.strftime("%m/%d")
+    if month_day in HOLIDAYS:
+        return True
+    return False
+
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
-    if change_percent > 0:
-        return "🟢 (+{:.2f}%)".format(change_percent)
+    if change_percent > CHANGE_THRESHOLD:
+        return "🚀 (+{:.2f}%)".format(change_percent)
+    elif change_percent > 0:
+        return "📈 (+{:.2f}%)".format(change_percent)
+    elif change_percent < -CHANGE_THRESHOLD:
+        return "⚠️ ({:.2f}%)".format(change_percent)
     elif change_percent < 0:
-        return "🔴 ({:.2f}%)".format(change_percent)
-    return "⚪ (0%)"
+        return "📉 ({:.2f}%)".format(change_percent)
+    return "⚖️ (0%)"
 
 def find_item_by_symbol(items, symbol):
     for item in items:
@@ -29,6 +65,7 @@ def find_item_by_symbol(items, symbol):
     return None
 
 def get_prices():
+    global last_prices, last_emergency_update
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
         response = requests.get(url, timeout=10)
@@ -38,7 +75,6 @@ def get_prices():
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
 
-        # گرفتن داده‌ها با نمادهای جدید
         prices = {
             'update_time': update_time,
             'gold_ounce': find_item_by_symbol(data['gold'], 'XAUUSD') or {'price': 'N/A', 'change_percent': 0},
@@ -51,10 +87,57 @@ def get_prices():
             'usd': find_item_by_symbol(data['currency'], 'USD') or {'price': 'N/A', 'change_percent': 0},
             'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
             'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
-            'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
+            'aed': find_item_by_symbol(data['gold'], 'AED') or {'price': 'N/A', 'change_percent': 0},
             'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
 
+        # چک کردن تغییرات بزرگ قیمت
+        if last_prices:
+            current_time = time.time()
+            significant_changes = []
+            for key in prices:
+                if key == 'update_time':
+                    continue
+                new_price = prices[key]['price']
+                old_price = last_prices[key]['price']
+                if new_price != 'N/A' and old_price != 'N/A':
+                    try:
+                        new_price = float(new_price)
+                        old_price = float(old_price)
+                        change_percent = ((new_price - old_price) / old_price) * 100
+                        if abs(change_percent) > CHANGE_THRESHOLD and (current_time - last_emergency_update) > MIN_EMERGENCY_INTERVAL:
+                            significant_changes.append((key, change_percent, new_price))
+                    except (ValueError, TypeError):
+                        continue
+
+            if significant_changes:
+                # ارسال پیام فوری برای تغییرات بزرگ
+                emergency_message = f"""
+🚨 <b>هشدار تغییر بزرگ قیمت!</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {datetime.now().strftime('%H:%M')}
+"""
+                for key, change_percent, new_price in significant_changes:
+                    name = {
+                        'gold_ounce': 'انس جهانی',
+                        'gold_18k': 'طلای 18 عیار',
+                        'coin_new': 'سکه بهار',
+                        'coin_old': 'سکه امامی',
+                        'half_coin': 'نیم سکه',
+                        'quarter_coin': 'ربع سکه',
+                        'gram_coin': 'سکه گرمی',
+                        'usd': 'دلار',
+                        'eur': 'یورو',
+                        'gbp': 'پوند',
+                        'aed': 'درهم',
+                        'usdt': 'تتر'
+                    }.get(key, key)
+                    emergency_message += f"{get_price_change_emoji(change_percent)} {name}: {format_price(new_price)} تومان\n"
+                emergency_message += f"📢 @{CHANNEL_ID.replace('@', '')}"
+                send_message(emergency_message)
+                last_emergency_update = current_time
+
+        last_prices = prices
         return prices
     except Exception as e:
         print(f"❌ خطا در دریافت داده: {e}")
@@ -88,8 +171,8 @@ def create_message(prices):
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
 
 <b>🏅 سکه</b>
-{get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
+{get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
 {get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
 {get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
 {get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
@@ -110,17 +193,29 @@ def format_price(price):
     except:
         return "نامشخص"
 
+def is_within_update_hours():
+    """چک کردن اینکه زمان فعلی در بازه آپدیت (11 صبح تا 8 شب) هست یا نه"""
+    current_hour = datetime.now().hour
+    return START_HOUR <= current_hour < END_HOUR
+
 def main():
     while True:
-        prices = get_prices()
-        if prices:
-            message = create_message(prices)
-            send_message(message)
-            print(f"✅ قیمت‌ها در {datetime.now().strftime('%H:%M')} ارسال شدند")
+        if is_holiday():
+            print(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
+            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
+        elif is_within_update_hours():
+            print(f"⏰ زمان فعلی: {datetime.now().strftime('%H:%M')} - در بازه آپدیت")
+            prices = get_prices()
+            if prices:
+                message = create_message(prices)
+                send_message(message)
+                print(f"✅ قیمت‌ها در {datetime.now().strftime('%H:%M')} ارسال شدند")
+            else:
+                print("❌ خطا در دریافت قیمت‌ها")
+            time.sleep(UPDATE_INTERVAL)  # صبر 30 دقیقه
         else:
-            print("❌ خطا در دریافت قیمت‌ها")
-        
-        time.sleep(UPDATE_INTERVAL)
+            print(f"⏰ زمان فعلی: {datetime.now().strftime('%H:%M')} - خارج از بازه آپدیت")
+            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
 
 if __name__ == "__main__":
     try:
