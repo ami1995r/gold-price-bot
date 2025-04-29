@@ -3,6 +3,7 @@ from datetime import datetime
 import jdatetime
 import time
 import os
+import pytz
 
 # ==================== تنظیمات ایمن ====================
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از متغیرهای محیطی Railway
@@ -10,8 +11,8 @@ CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
 UPDATE_INTERVAL = 1800  # هر 30 دقیقه (1800 ثانیه)
 CHECK_INTERVAL = 300    # هر 5 دقیقه چک کردن زمان (برای خارج از بازه)
-START_HOUR = 11         # ساعت شروع آپدیت (11 صبح)
-END_HOUR = 20           # ساعت پایان آپدیت (8 شب)
+START_HOUR = 11         # ساعت شروع آپدیت (11 صبح به وقت تهران)
+END_HOUR = 20           # ساعت پایان آپدیت (8 شب به وقت تهران)
 CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت برای آپدیت فوری (2%)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله بین آپدیت‌های فوری (5 دقیقه)
 # =====================================================
@@ -32,6 +33,9 @@ HOLIDAYS = [
 # ذخیره قیمت‌های قبلی و زمان آخرین آپدیت فوری
 last_prices = None
 last_emergency_update = 0
+
+# تنظیم منطقه زمانی تهران
+TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 def get_jalali_date():
     return jdatetime.datetime.now().strftime("%Y/%m/%d")
@@ -73,7 +77,7 @@ def get_prices():
         data = response.json()
         print("داده‌های API:", data)
 
-        update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
+        update_time = data['gold'][0]['time'] if data['gold'] else datetime.now(TEHRAN_TZ).strftime("%H:%M")
 
         prices = {
             'update_time': update_time,
@@ -87,7 +91,7 @@ def get_prices():
             'usd': find_item_by_symbol(data['currency'], 'USD') or {'price': 'N/A', 'change_percent': 0},
             'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
             'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
-            'aed': find_item_by_symbol(data['gold'], 'AED') or {'price': 'N/A', 'change_percent': 0},
+            'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
             'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
 
@@ -115,7 +119,7 @@ def get_prices():
                 emergency_message = f"""
 🚨 <b>هشدار تغییر بزرگ قیمت!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {datetime.now().strftime('%H:%M')}
+⏰ زمان: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
 """
                 for key, change_percent, new_price in significant_changes:
                     name = {
@@ -194,8 +198,9 @@ def format_price(price):
         return "نامشخص"
 
 def is_within_update_hours():
-    """چک کردن اینکه زمان فعلی در بازه آپدیت (11 صبح تا 8 شب) هست یا نه"""
-    current_hour = datetime.now().hour
+    """چک کردن اینکه زمان فعلی در بازه آپدیت (11 صبح تا 8 شب به وقت تهران) هست یا نه"""
+    current_time = datetime.now(TEHRAN_TZ)
+    current_hour = current_time.hour
     return START_HOUR <= current_hour < END_HOUR
 
 def main():
@@ -204,25 +209,27 @@ def main():
             print(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
             time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
         elif is_within_update_hours():
-            print(f"⏰ زمان فعلی: {datetime.now().strftime('%H:%M')} - در بازه آپدیت")
+            print(f"⏰ زمان فعلی (تهران): {datetime.now(TEHRAN_TZ).strftime('%H:%M')} - در بازه آپدیت")
             prices = get_prices()
             if prices:
                 message = create_message(prices)
                 send_message(message)
-                print(f"✅ قیمت‌ها در {datetime.now().strftime('%H:%M')} ارسال شدند")
+                print(f"✅ قیمت‌ها در {datetime.now(TEHRAN_TZ).strftime('%H:%M')} ارسال شدند")
             else:
                 print("❌ خطا در دریافت قیمت‌ها")
             time.sleep(UPDATE_INTERVAL)  # صبر 30 دقیقه
         else:
-            print(f"⏰ زمان فعلی: {datetime.now().strftime('%H:%M')} - خارج از بازه آپدیت")
+            print(f"⏰ زمان فعلی (تهران): {datetime.now(TEHRAN_TZ).strftime('%H:%M')} - خارج از بازه آپدیت")
             time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
 
 if __name__ == "__main__":
     try:
         import jdatetime
+        import pytz
     except ImportError:
         import os
-        os.system("pip install jdatetime")
+        os.system("pip install jdatetime pytz")
         import jdatetime
+        import pytz
     
     main()
