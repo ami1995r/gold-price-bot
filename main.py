@@ -134,8 +134,8 @@ def send_holiday_notification():
 📢 <b>امروز تعطیله!</b>
 📅 تاریخ: {get_jalali_date()}
 🔔 مناسبت: {event_text}
-بازار بسته‌ست و آپدیت قیمت نداریم. روز کاری بعدی ساعت 11 صبح شروع می‌کنیم!
-📢 @{CHANNEL_ID.replace('@', '')}
+بازار بسته‌ست و آپدیت قیمت نداریم.
+▫️ @{CHANNEL_ID.replace('@', '')}
 """
     send_message(message)
     print("✅ اعلان تعطیلات ارسال شد")
@@ -147,7 +147,7 @@ def send_start_notification():
 📅 تاریخ: {get_jalali_date()}
 ⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
 هر 30 دقیقه قیمت‌های جدید طلا، سکه و ارز رو می‌فرستیم!
-📢 @{CHANNEL_ID.replace('@', '')}
+▫️ @{CHANNEL_ID.replace('@', '')}
 """
     send_message(message)
     print("✅ اعلان شروع روز کاری ارسال شد")
@@ -159,22 +159,18 @@ def send_end_notification():
 📅 تاریخ: {get_jalali_date()}
 ⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
 آپدیت امروز تموم شد. فردا ساعت 11 صبح ادامه می‌دیم!
-📢 @{CHANNEL_ID.replace('@', '')}
+▫️ @{CHANNEL_ID.replace('@', '')}
 """
     send_message(message)
     print("✅ اعلان پایان روز کاری ارسال شد")
 
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
-    if change_percent > CHANGE_THRESHOLD:
-        return "🔺 (+{:.2f}%)".format(change_percent)
-    elif change_percent > 0:
-        return "⬆️ (+{:.2f}%)".format(change_percent)
-    elif change_percent < -CHANGE_THRESHOLD:
-        return "🔻 ({:.2f}%)".format(change_percent)
+    if change_percent > 0:
+        return "🔺"
     elif change_percent < 0:
-        return "⬇️ ({:.2f}%)".format(change_percent)
-    return "➖ (0%)"
+        return "🔻"
+    return "➖"
 
 def find_item_by_symbol(items, symbol):
     for item in items:
@@ -278,17 +274,18 @@ def send_message(text):
         print(f"❌ ارسال پیام ناموفق: {e}")
 
 def create_message(prices):
-    """ایجاد پیام بدون خطوط جداکننده و با ترتیب جدید"""
+    """ایجاد پیام با تغییرات درخواستی"""
     return f"""
-📅 <b>تاریخ: {get_jalali_date()}</b> | ⏰ <b>ساعت: {prices['update_time']}</b>
+📅 <b>تاریخ: {get_jalali_date()}</b>
+⏰ <b>آخرین آپدیت: {prices['update_time']}</b>
 
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
-<b>🏆 طلا</b>
-{get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
+<b>🪙 طلا</b>
+{get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']}
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
 
-<b>🏅 سکه</b>
+<b>🪙 سکه</b>
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
 {get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
@@ -302,7 +299,7 @@ def create_message(prices):
 {get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {format_price(prices['gbp']['price'])} تومان
 {get_price_change_emoji(prices['aed']['change_percent'])} درهم: {format_price(prices['aed']['price'])} تومان
 
-📢 @{CHANNEL_ID.replace('@', '')}
+▫️ @{CHANNEL_ID.replace('@', '')}
 """
 
 def format_price(price):
