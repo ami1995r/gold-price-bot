@@ -17,7 +17,7 @@ CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت برای آپدیت �
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله بین آپدیت‌های فوری (5 دقیقه)
 # =====================================================
 
-# لیست تعطیلات رسمی ثابت (به تاریخ شمسی: ماه/روز)
+# لیست تعطیلات رسمی ثابت (به تاریخ شمسی: ماه/روز) - به عنوان فال‌بک
 HOLIDAYS = [
     "01/01",  # 1 فروردین (نوروز)
     "01/02",  # 2 فروردین (نوروز)
@@ -33,6 +33,13 @@ HOLIDAYS = [
 # ذخیره قیمت‌های قبلی و زمان آخرین آپدیت فوری
 last_prices = None
 last_emergency_update = 0
+# کش تعطیلات
+holidays_cache = None
+# زمان آخرین اعلان تعطیلات
+last_holiday_notification = None
+# پرچم‌های اعلان شروع و پایان
+start_notification_sent = False
+end_notification_sent = False
 
 # تنظیم منطقه زمانی تهران
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
@@ -40,15 +47,122 @@ TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 def get_jalali_date():
     return jdatetime.datetime.now().strftime("%Y/%m/%d")
 
+def load_holidays_cache():
+    """گرفتن تعطیلات سال از holidayapi.ir و ذخیره در کش"""
+    global holidays_cache
+    try:
+        year = jdatetime.datetime.now().year
+        url = f"https://holidayapi.ir/jalali/{year}"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        holidays_cache = []
+        for day in data:
+            if day['is_holiday']:
+                date = jdatetime.datetime.strptime(day['date'], "%Y/%m/%d")
+                holidays_cache.append({
+                    'month_day': date.strftime("%m/%d"),
+                    'events': day['events']
+                })
+        print(f"✅ تعطیلات سال {year} در کش ذخیره شد: {len(holidays_cache)} تعطیلی")
+    except Exception as e:
+        print(f"❌ خطا در گرفتن تعطیلات سال از holidayapi.ir: {e}")
+        holidays_cache = []
+
 def is_holiday():
     """چک کردن اینکه امروز تعطیل است یا نه"""
     today = jdatetime.datetime.now()
+    # چک کردن اینکه امروز جمعه است
     if today.weekday() == 4:  # در jdatetime، 4 = جمعه
         return True
+    
+    # استفاده از کش تعطیلات
     month_day = today.strftime("%m/%d")
-    if month_day in HOLIDAYS:
-        return True
+    if holidays_cache:
+        for holiday in holidays_cache:
+            if holiday['month_day'] == month_day:
+                return True
+    else:
+        # گرفتن تعطیلات از API به صورت زنده (اگه کش خالی باشه)
+        try:
+            year = today.year
+            month = today.month
+            day = today.day
+            url = f"https://holidayapi.ir/jalali/{year}/{month}/{day}"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            if data['is_holiday']:
+                return True
+        except Exception as e:
+            print(f"❌ خطا در گرفتن تعطیلات از holidayapi.ir: {e}")
+            # فال‌بک به لیست ثابت
+            if month_day in HOLIDAYS:
+                return True
+    
     return False
+
+def send_holiday_notification():
+    """ارسال اعلان تعطیلات در ساعت 11 صبح"""
+    today = jdatetime.datetime.now()
+    month_day = today.strftime("%m/%d")
+    events = []
+    
+    # گرفتن مناسبت‌ها از کش یا API
+    if holidays_cache:
+        for holiday in holidays_cache:
+            if holiday['month_day'] == month_day:
+                events = holiday['events']
+                break
+    else:
+        try:
+            year = today.year
+            month = today.month
+            day = today.day
+            url = f"https://holidayapi.ir/jalali/{year}/{month}/{day}"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            if data['is_holiday']:
+                events = data['events']
+        except Exception as e:
+            print(f"❌ خطا در گرفتن مناسبت‌ها از holidayapi.ir: {e}")
+
+    # ساخت پیام اعلان
+    event_text = events[0] if events else "تعطیل رسمی"
+    message = f"""
+📢 <b>امروز تعطیله!</b>
+📅 تاریخ: {get_jalali_date()}
+🔔 مناسبت: {event_text}
+بازار بسته‌ست و آپدیت قیمت نداریم. روز کاری بعدی ساعت 11 صبح شروع می‌کنیم!
+📢 @{CHANNEL_ID.replace('@', '')}
+"""
+    send_message(message)
+    print("✅ اعلان تعطیلات ارسال شد")
+
+def send_start_notification():
+    """ارسال اعلان شروع روز کاری"""
+    message = f"""
+📢 <b>شروع آپدیت قیمت‌ها!</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+هر 30 دقیقه قیمت‌های جدید طلا، سکه و ارز رو می‌فرستیم!
+📢 @{CHANNEL_ID.replace('@', '')}
+"""
+    send_message(message)
+    print("✅ اعلان شروع روز کاری ارسال شد")
+
+def send_end_notification():
+    """ارسال اعلان پایان روز کاری"""
+    message = f"""
+📢 <b>پایان آپدیت قیمت‌ها!</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+آپدیت امروز تموم شد. فردا ساعت 11 صبح ادامه می‌دیم!
+📢 @{CHANNEL_ID.replace('@', '')}
+"""
+    send_message(message)
+    print("✅ اعلان پایان روز کاری ارسال شد")
 
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
@@ -75,7 +189,7 @@ def get_prices():
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
-        print("داده‌های API:", data)
+        print("داده‌های API قیمت‌ها:", data)
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now(TEHRAN_TZ).strftime("%H:%M")
 
@@ -144,7 +258,7 @@ def get_prices():
         last_prices = prices
         return prices
     except Exception as e:
-        print(f"❌ خطا در دریافت داده: {e}")
+        print(f"❌ خطا در دریافت داده قیمت‌ها: {e}")
         return None
 
 def send_message(text):
@@ -164,30 +278,30 @@ def send_message(text):
         print(f"❌ ارسال پیام ناموفق: {e}")
 
 def create_message(prices):
+    """ایجاد پیام با قالب گرافیکی"""
     return f"""
-📅 <b>تاریخ: {get_jalali_date()}</b>
-⏰ <b>آخرین بروزرسانی: {prices['update_time']}</b>
-
+📅 <b>تاریخ: {get_jalali_date()}</b> | ⏰ <b>ساعت: {prices['update_time']}</b>
+───────────────────────
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
 <b>🏆 طلا</b>
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']} دلار
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
-
+───────────────────────
 <b>🏅 سکه</b>
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
 {get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
 {get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
 {get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
-
+───────────────────────
 <b>💱 ارزها</b>
 {get_price_change_emoji(prices['usd']['change_percent'])} دلار: {format_price(prices['usd']['price'])} تومان
 {get_price_change_emoji(prices['eur']['change_percent'])} یورو: {format_price(prices['eur']['price'])} تومان
 {get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {format_price(prices['gbp']['price'])} تومان
 {get_price_change_emoji(prices['aed']['change_percent'])} درهم: {format_price(prices['aed']['price'])} تومان
 {get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {format_price(prices['usdt']['price'])} تومان
-
+───────────────────────
 📢 @{CHANNEL_ID.replace('@', '')}
 """
 
@@ -204,23 +318,54 @@ def is_within_update_hours():
     return START_HOUR <= current_hour < END_HOUR
 
 def main():
+    global last_holiday_notification, start_notification_sent, end_notification_sent
+    
+    # بارگذاری تعطیلات در شروع برنامه
+    load_holidays_cache()
+    
     while True:
+        current_time = datetime.now(TEHRAN_TZ)
+        current_hour = current_time.hour
+        current_minute = current_time.minute
+        
+        # ریست پرچم‌های اعلان در شروع روز
+        if current_hour == 0 and current_minute == 0:
+            start_notification_sent = False
+            end_notification_sent = False
+            last_holiday_notification = None
+        
         if is_holiday():
+            # ارسال اعلان تعطیلات در ساعت 11 صبح
+            if (current_hour == START_HOUR and current_minute == 0 and 
+                (last_holiday_notification is None or 
+                 last_holiday_notification.date() != current_time.date())):
+                send_holiday_notification()
+                last_holiday_notification = current_time
             print(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
-            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
+            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه
         elif is_within_update_hours():
-            print(f"⏰ زمان فعلی (تهران): {datetime.now(TEHRAN_TZ).strftime('%H:%M')} - در بازه آپدیت")
+            # ارسال اعلان شروع روز کاری
+            if current_hour == START_HOUR and current_minute == 0 and not start_notification_sent:
+                send_start_notification()
+                start_notification_sent = True
+            
+            print(f"⏰ زمان فعلی (تهران): {current_time.strftime('%H:%M')} - در بازه آپدیت")
             prices = get_prices()
             if prices:
                 message = create_message(prices)
                 send_message(message)
-                print(f"✅ قیمت‌ها در {datetime.now(TEHRAN_TZ).strftime('%H:%M')} ارسال شدند")
+                print(f"✅ قیمت‌ها در {current_time.strftime('%H:%M')} ارسال شدند")
             else:
                 print("❌ خطا در دریافت قیمت‌ها")
             time.sleep(UPDATE_INTERVAL)  # صبر 30 دقیقه
         else:
-            print(f"⏰ زمان فعلی (تهران): {datetime.now(TEHRAN_TZ).strftime('%H:%M')} - خارج از بازه آپدیت")
-            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه تا چک بعدی
+            # ارسال اعلان پایان روز کاری
+            if current_hour == END_HOUR and current_minute == 0 and not end_notification_sent:
+                send_end_notification()
+                end_notification_sent = True
+            
+            print(f"⏰ زمان فعلی (تهران): {current_time.strftime('%H:%M')} - خارج از بازه آپدیت")
+            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه
 
 if __name__ == "__main__":
     try:
