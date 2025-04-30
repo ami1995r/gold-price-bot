@@ -11,28 +11,37 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ==================== تنظیمات ایمن ====================
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از متغیرهای محیطی Railway
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # از متغیرهای محیطی
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
-UPDATE_INTERVAL = 1800  # هر 30 دقیقه (1800 ثانیه)
-CHECK_INTERVAL = 300    # هر 5 دقیقه چک کردن زمان (برای خارج از بازه)
-START_HOUR = 11         # ساعت شروع آپدیت (11 صبح به وقت تهران)
-END_HOUR = 20           # ساعت پایان آپدیت (8 شب به وقت تهران)
-CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت برای آپدیت فوری (2%)
-MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله بین آپدیت‌های فوری (5 دقیقه)
+ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')  # برای اعلان‌های خطا
+UPDATE_INTERVAL = 1800  # هر 30 دقیقه
+CHECK_INTERVAL = 300    # هر 5 دقیقه
+START_HOUR = 11         # ساعت شروع آپدیت
+END_HOUR = 20           # ساعت پایان آپدیت
+CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
+MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
-# لیست تعطیلات رسمی ثابت (به تاریخ شمسی: ماه/روز) - به عنوان فال‌بک
+# لیست تعطیلات رسمی 1404 (کامل‌تر)
 HOLIDAYS = [
-    "01/01",  # 1 فروردین (نوروز)
-    "01/02",  # 2 فروردین (نوروز)
-    "01/03",  # 3 فروردین (نوروز)
-    "01/04",  # 4 فروردین (نوروز)
-    "01/12",  # 12 فروردین (روز جمهوری اسلامی)
-    "01/13",  # 13 فروردین (سیزده‌به‌در)
-    "03/14",  # 14 خرداد (رحلت امام خمینی)
-    "03/15",  # 15 خرداد (قیام 15 خرداد)
-    "11/22",  # 22 بهمن (پیروزی انقلاب)
+    "01/01", "01/02", "01/03", "01/04",  # نوروز
+    "01/12",  # روز جمهوری اسلامی
+    "01/13",  # سیزده‌به‌در
+    "02/14",  # رحلت حضرت فاطمه
+    "03/14",  # رحلت امام خمینی
+    "03/15",  # قیام 15 خرداد
+    "04/03",  # عید فطر
+    "04/04",  # عید فطر
+    "06/10",  # عید قربان
+    "07/18",  # عید غدیر
+    "08/15",  # تاسوعا
+    "08/16",  # عاشورا
+    "09/25",  # اربعین
+    "10/03",  # رحلت پیامبر و شهادت امام حسن
+    "10/04",  # شهادت امام رضا
+    "11/22",  # پیروزی انقلاب
+    "12/12",  # میلاد پیامبر
 ]
 
 # لیست استثناها (روزهایی که نباید تعطیل باشند)
@@ -40,16 +49,14 @@ NON_HOLIDAYS = [
     "02/10",  # 10 اردیبهشت
 ]
 
-# ذخیره قیمت‌های قبلی و زمان آخرین آپدیت فوری
+# ذخیره قیمت‌ها و متغیرهای جهانی
 last_prices = None
 last_emergency_update = 0
-# کش تعطیلات
 holidays_cache = None
-# زمان آخرین اعلان تعطیلات
 last_holiday_notification = None
-# پرچم‌های اعلان شروع و پایان
 start_notification_sent = False
 end_notification_sent = False
+last_cache_refresh = None
 
 # تنظیم منطقه زمانی تهران
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
@@ -59,7 +66,7 @@ def get_jalali_date():
 
 def load_holidays_cache():
     """گرفتن تعطیلات سال از holidayapi.ir و ذخیره در کش"""
-    global holidays_cache
+    global holidays_cache, last_cache_refresh
     try:
         year = jdatetime.datetime.now().year
         url = f"https://holidayapi.ir/jalali/{year}"
@@ -71,12 +78,12 @@ def load_holidays_cache():
             if day['is_holiday']:
                 date = jdatetime.datetime.strptime(day['date'], "%Y/%m/%d")
                 month_day = date.strftime("%m/%d")
-                # چک کردن استثناها
                 if month_day not in NON_HOLIDAYS:
                     holidays_cache.append({
                         'month_day': month_day,
                         'events': day['events']
                     })
+        last_cache_refresh = datetime.now(TEHRAN_TZ)
         logger.info(f"✅ تعطیلات سال {year} در کش ذخیره شد: {len(holidays_cache)} تعطیلی")
     except Exception as e:
         logger.error(f"❌ خطا در گرفتن تعطیلات سال از holidayapi.ir: {e}")
@@ -93,7 +100,7 @@ def is_holiday():
         return False
     
     # چک کردن اینکه امروز جمعه است
-    if today.weekday() == 4:  # در jdatetime، 4 = جمعه
+    if today.weekday() == 4:
         logger.info(f"📅 {month_day} جمعه است - تعطیل")
         return True
     
@@ -102,9 +109,12 @@ def is_holiday():
         for holiday in holidays_cache:
             if holiday['month_day'] == month_day:
                 logger.info(f"📅 {month_day} در کش تعطیلات یافت شد: {holiday['events']}")
+                # اعتبارسنجی با HOLIDAYS
+                if month_day not in HOLIDAYS:
+                    send_suspicious_holiday_alert(today, holiday['events'])
                 return True
     
-    # گرفتن تعطیلات از API به صورت زنده
+    # گرفتن تعطیلات از API
     try:
         year = today.year
         month = today.month
@@ -115,10 +125,11 @@ def is_holiday():
         data = response.json()
         logger.info(f"پاسخ API برای {year}/{month}/{day}: {data}")
         if data['is_holiday'] and month_day not in NON_HOLIDAYS:
+            if month_day not in HOLIDAYS:
+                send_suspicious_holiday_alert(today, data.get('events', []))
             return True
     except Exception as e:
         logger.error(f"❌ خطا در گرفتن تعطیلات از holidayapi.ir: {e}")
-        # فال‌بک به لیست ثابت
         if month_day in HOLIDAYS:
             logger.info(f"📅 {month_day} در لیست ثابت تعطیلات یافت شد")
             return True
@@ -126,13 +137,38 @@ def is_holiday():
     logger.info(f"📅 {month_day} تعطیل نیست")
     return False
 
+def send_suspicious_holiday_alert(today, events):
+    """ارسال اعلان برای تعطیلات مشکوک"""
+    if not ADMIN_CHAT_ID:
+        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، اعلان تعطیلات مشکوک ارسال نشد")
+        return
+    event_text = events[0] if events else "نامشخص"
+    message = f"""
+⚠️ <b>هشدار تعطیلات مشکوک!</b>
+📅 تاریخ: {get_jalali_date()}
+🔔 API روز {today.strftime('%Y/%m/%d')} رو تعطیل برگردوند (مناسبت: {event_text})
+ولی توی لیست تعطیلات معتبر نیست. لطفاً بررسی کن!
+▫️ @{CHANNEL_ID.replace('@', '')}
+"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        response = requests.post(url, json={
+            'chat_id': ADMIN_CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        })
+        response.raise_for_status()
+        logger.info("✅ اعلان تعطیلات مشکوک ارسال شد")
+    except Exception as e:
+        logger.error(f"❌ خطا در ارسال اعلان تعطیلات مشکوک: {e}")
+
 def send_holiday_notification():
-    """ارسال اعلان تعطیلات در ساعت 11 صبح"""
+    """ارسال اعلان تعطیلات"""
     today = jdatetime.datetime.now()
     month_day = today.strftime("%m/%d")
     events = []
     
-    # گرفتن مناسبت‌ها از کش یا API
     if holidays_cache:
         for holiday in holidays_cache:
             if holiday['month_day'] == month_day:
@@ -152,7 +188,6 @@ def send_holiday_notification():
         except Exception as e:
             logger.error(f"❌ خطا در گرفتن مناسبت‌ها از holidayapi.ir: {e}")
 
-    # ساخت پیام اعلان
     event_text = events[0] if events else "تعطیل رسمی"
     message = f"""
 📢 <b>امروز تعطیله!</b>
@@ -229,7 +264,6 @@ def get_prices():
             'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
 
-        # چک کردن تغییرات بزرگ قیمت
         if last_prices:
             current_time = time.time()
             significant_changes = []
@@ -249,7 +283,6 @@ def get_prices():
                         continue
 
             if significant_changes:
-                # ارسال پیام فوری برای تغییرات بزرگ
                 emergency_message = f"""
 🚨 <b>هشدار تغییر بزرگ قیمت!</b>
 📅 تاریخ: {get_jalali_date()}
@@ -281,12 +314,14 @@ def get_prices():
         logger.error(f"❌ خطا در دریافت داده قیمت‌ها: {e}")
         return None
 
-def send_message(text):
+def send_message(text, chat_id=None):
+    """ارسال پیام به کانال یا ادمین"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        logger.info(f"در حال ارسال پیام به {CHANNEL_ID}")
+        target_chat_id = chat_id or CHANNEL_ID
+        logger.info(f"در حال ارسال پیام به {target_chat_id}")
         response = requests.post(url, json={
-            'chat_id': CHANNEL_ID,
+            'chat_id': target_chat_id,
             'text': text,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True
@@ -298,7 +333,7 @@ def send_message(text):
         logger.error(f"❌ ارسال پیام ناموفق: {e}")
 
 def create_message(prices):
-    """ایجاد پیام با تغییرات درخواستی"""
+    """ایجاد پیام قیمت‌ها"""
     return f"""
 📅 <b>تاریخ: {get_jalali_date()}</b>
 ⏰ <b>آخرین آپدیت: {prices['update_time']}</b>
@@ -333,39 +368,43 @@ def format_price(price):
         return "نامشخص"
 
 def is_within_update_hours():
-    """چک کردن اینکه زمان فعلی در بازه آپدیت (11 صبح تا 8 شب به وقت تهران) هست یا نه"""
+    """چک کردن بازه آپدیت"""
     current_time = datetime.now(TEHRAN_TZ)
     current_hour = current_time.hour
     return START_HOUR <= current_hour < END_HOUR
 
 def main():
-    global last_holiday_notification, start_notification_sent, end_notification_sent
+    global last_holiday_notification, start_notification_sent, end_notification_sent, last_cache_refresh
     
-    # بارگذاری تعطیلات در شروع برنامه
+    # بارگذاری تعطیلات
     load_holidays_cache()
     
     while True:
         current_time = datetime.now(TEHRAN_TZ)
         current_hour = current_time.hour
         current_minute = current_time.minute
+        today = jdatetime.datetime.now()
         
-        # ریست پرچم‌های اعلان در شروع روز
+        # ریست پرچم‌ها در شروع روز
         if current_hour == 0 and current_minute == 0:
             start_notification_sent = False
             end_notification_sent = False
             last_holiday_notification = None
         
+        # رفرش کش اول هر ماه
+        if today.day == 1 and (last_cache_refresh is None or last_cache_refresh.month != today.month):
+            logger.info("🔄 رفرش کش تعطیلات در ابتدای ماه")
+            load_holidays_cache()
+        
         if is_holiday():
-            # ارسال اعلان تعطیلات در ساعت 11 صبح
             if (current_hour == START_HOUR and current_minute == 0 and 
                 (last_holiday_notification is None or 
                  last_holiday_notification.date() != current_time.date())):
                 send_holiday_notification()
                 last_holiday_notification = current_time
             logger.info(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
-            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه
+            time.sleep(CHECK_INTERVAL)
         elif is_within_update_hours():
-            # ارسال اعلان شروع روز کاری
             if current_hour == START_HOUR and current_minute == 0 and not start_notification_sent:
                 send_start_notification()
                 start_notification_sent = True
@@ -378,15 +417,14 @@ def main():
                 logger.info(f"✅ قیمت‌ها در {current_time.strftime('%H:%M')} ارسال شدند")
             else:
                 logger.error("❌ خطا در دریافت قیمت‌ها")
-            time.sleep(UPDATE_INTERVAL)  # صبر 30 دقیقه
+            time.sleep(UPDATE_INTERVAL)
         else:
-            # ارسال اعلان پایان روز کاری
             if current_hour == END_HOUR and current_minute == 0 and not end_notification_sent:
                 send_end_notification()
                 end_notification_sent = True
             
             logger.info(f"⏰ زمان فعلی (تهران): {current_time.strftime('%H:%M')} - خارج از بازه آپدیت")
-            time.sleep(CHECK_INTERVAL)  # صبر 5 دقیقه
+            time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
     try:
