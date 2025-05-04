@@ -43,7 +43,7 @@ HOLIDAYS = [
 # لیست استثناها (روزهایی که نباید تعطیل باشند)
 NON_HOLIDAYS = [
     "02/10",  # 10 اردیبهشت
-    "02/14",  # 14 اردیبهشت (برای اطمینان)
+    "02/14",  # 14 اردیبهشت
 ]
 
 # ذخیره قیمت‌ها و متغیرهای جهانی
@@ -58,7 +58,7 @@ last_suspicious_holiday_alert = None
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 def get_jalali_date():
-    return jdatetime.datetime.now().strftime("%Y/%m/%d")
+    return jdatetime.datetime.now(tz=TEHRAN_TZ).strftime("%Y/%m/%d")
 
 def is_holiday():
     """چک کردن اینکه امروز تعطیل است یا نه"""
@@ -100,6 +100,7 @@ def send_suspicious_holiday_alert(today):
         return
     
     month_day = today.strftime("%m/%d")
+    weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
     event_text = {
         "01/01": "نوروز", "01/02": "نوروز", "01/03": "نوروز", "01/04": "نوروز",
         "01/12": "روز جمهوری اسلامی", "01/13": "سیزده‌به‌در",
@@ -218,7 +219,6 @@ def get_prices():
         prices = {
             'update_time': update_time,
             'gold_ounce': find_item_by_symbol(data['gold'], 'XAUUSD') or {'price': 'N/A', 'change_percent': 0},
- arrows
             'gold_18k': find_item_by_symbol(data['gold'], 'IR_GOLD_18K') or {'price': 'N/A', 'change_percent': 0},
             'coin_new': find_item_by_symbol(data['gold'], 'IR_COIN_BAHAR') or {'price': 'N/A', 'change_percent': 0},
             'coin_old': find_item_by_symbol(data['gold'], 'IR_COIN_EMAMI') or {'price': 'N/A', 'change_percent': 0},
@@ -344,7 +344,7 @@ def is_within_update_hours():
 def test_holiday(date_str):
     """تابع تست برای چک کردن تعطیلی یک تاریخ خاص"""
     try:
-        date = jdatetime.datetime.strptime(date_str, "%Y/%m/%d")
+        date = jdatetime.datetime.strptime(date_str, "%Y/%m/%d").replace(tzinfo=TEHRAN_TZ)
         month_day = date.strftime("%m/%d")
         weekday = date.weekday()
         weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
@@ -375,6 +375,11 @@ def main():
     logger.info("🔍 تست تعطیلی برای 1404/02/14")
     is_holiday_14_may = test_holiday("1404/02/14")
     logger.info(f"نتیجه تست: 1404/02/14 {'تعطیل است' if is_holiday_14_may else 'تعطیل نیست'}")
+    
+    # تست تعطیلی برای یک جمعه (مثلاً 12 اردیبهشت 1404)
+    logger.info("🔍 تست تعطیلی برای 1404/02/12")
+    is_holiday_friday = test_holiday("1404/02/12")
+    logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
     
     while True:
         current_time = datetime.now(TEHRAN_TZ)
