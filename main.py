@@ -97,6 +97,7 @@ def send_suspicious_holiday_alert(today):
     # فقط یک بار در روز اعلان بفرست
     current_date = today.date()
     if last_suspicious_holiday_alert and last_suspicious_holiday_alert.date() == current_date:
+        logger.info("⏭️ اعلان تعطیلات مشکوک قبلاً امروز ارسال شده، صرف‌نظر شد")
         return
     
     month_day = today.strftime("%m/%d")
@@ -119,6 +120,7 @@ def send_suspicious_holiday_alert(today):
 لطفاً بررسی کنید که آیا این روز واقعاً تعطیل است!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
+    logger.info(f"📤 در حال ارسال اعلان تعطیلات مشکوک به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
     send_message(message, chat_id=ADMIN_CHAT_ID)
     last_suspicious_holiday_alert = today
     logger.info("✅ اعلان تعطیلات مشکوک ارسال شد")
@@ -176,8 +178,26 @@ def send_start_notification():
         admin_message = f"""
 ✅ امروز پیام ارسال شد در روز {get_jalali_date()}
 """
+        logger.info(f"📤 در حال ارسال پیام شروع روز به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
         send_message(admin_message, chat_id=ADMIN_CHAT_ID)
         logger.info("✅ پیام شروع روز به ادمین ارسال شد")
+
+def send_test_admin_message():
+    """ارسال پیام تست به ADMIN_CHAT_ID برای اطمینان از تنظیمات"""
+    if not ADMIN_CHAT_ID:
+        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، پیام تست ارسال نشد")
+        return
+    
+    message = f"""
+🧪 <b>پیام تست برای ADMIN_CHAT_ID</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+این پیام برای اطمینان از تنظیم درست ADMIN_CHAT_ID ارسال شده است.
+▫️ @{CHANNEL_ID.replace('@', '')}
+"""
+    logger.info(f"📤 در حال ارسال پیام تست به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    send_message(message, chat_id=ADMIN_CHAT_ID)
+    logger.info("✅ پیام تست به ادمین ارسال شد")
 
 def send_end_notification():
     """ارسال اعلان پایان روز کاری"""
@@ -287,18 +307,18 @@ def send_message(text, chat_id=None):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         target_chat_id = chat_id or CHANNEL_ID
-        logger.info(f"در حال ارسال پیام به {target_chat_id}")
+        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
         response = requests.post(url, json={
             'chat_id': target_chat_id,
             'text': text,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True
         })
-        logger.info(f"پاسخ تلگرام: {response.text}")
+        logger.info(f"📥 پاسخ تلگرام: {response.text}")
         response.raise_for_status()
         logger.info("✅ پیام با موفقیت ارسال شد")
     except Exception as e:
-        logger.error(f"❌ ارسال پیام ناموفق: {e}")
+        logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
 
 def create_message(prices):
     """ایجاد پیام قیمت‌ها"""
@@ -370,6 +390,10 @@ def test_holiday(date_str):
 
 def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent, last_suspicious_holiday_alert
+    
+    # ارسال پیام تست به ADMIN_CHAT_ID
+    logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
+    send_test_admin_message()
     
     # تست تعطیلی برای 14 اردیبهشت 1404
     logger.info("🔍 تست تعطیلی برای 1404/02/14")
