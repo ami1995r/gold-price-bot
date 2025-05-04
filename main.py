@@ -23,6 +23,9 @@ CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
+# تنظیم منطقه زمانی تهران
+TEHRAN_TZ = pytz.timezone('Asia/Tehran')
+
 # چک کردن متغیرهای محیطی
 if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
     missing_vars = [var for var, val in [('TELEGRAM_TOKEN', TELEGRAM_TOKEN), ('CHANNEL_ID', CHANNEL_ID), 
@@ -32,12 +35,23 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
     if ADMIN_CHAT_ID:
         send_message(f"""
 🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {jdatetime.datetime.now(tz=pytz.timezone('Asia/Tehran')).strftime('%Y/%m/%d')}
+📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
 🔔 مشکل: {error_message}
 لطفاً تنظیمات محیطی را بررسی کنید!
 ▫️ @{CHANNEL_ID.replace('@', '') if CHANNEL_ID else 'UnknownChannel'}
 """, chat_id=ADMIN_CHAT_ID)
     raise EnvironmentError(error_message)
+
+# چک کردن منطقه زمانی سرور
+if datetime.now().tzinfo is None or datetime.now(TEHRAN_TZ).tzname() != 'Asia/Tehran':
+    logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {datetime.now().tzinfo or 'None'}")
+    send_message(f"""
+🚨 <b>خطای بحرانی!</b>
+📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
+🔔 مشکل: منطقه زمانی سرور اشتباه است ({datetime.now().tzinfo or 'None'})، باید Asia/Tehran باشد
+لطفاً متغیر محیطی TZ را روی Asia/Tehran تنظیم کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+""", chat_id=ADMIN_CHAT_ID)
 
 # لیست تعطیلات رسمی 1404 (فقط تعطیلات قطعی)
 HOLIDAYS = [
@@ -69,9 +83,6 @@ last_holiday_notification = None
 start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
-
-# تنظیم منطقه زمانی تهران
-TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 def get_jalali_date():
     return jdatetime.datetime.now(tz=TEHRAN_TZ).strftime("%Y/%m/%d")
