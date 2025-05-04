@@ -23,6 +23,22 @@ CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
+# چک کردن متغیرهای محیطی
+if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
+    missing_vars = [var for var, val in [('TELEGRAM_TOKEN', TELEGRAM_TOKEN), ('CHANNEL_ID', CHANNEL_ID), 
+                                         ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
+    error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
+    logger.error(error_message)
+    if ADMIN_CHAT_ID:
+        send_message(f"""
+🚨 <b>خطای بحرانی!</b>
+📅 تاریخ: {jdatetime.datetime.now(tz=pytz.timezone('Asia/Tehran')).strftime('%Y/%m/%d')}
+🔔 مشکل: {error_message}
+لطفاً تنظیمات محیطی را بررسی کنید!
+▫️ @{CHANNEL_ID.replace('@', '') if CHANNEL_ID else 'UnknownChannel'}
+""", chat_id=ADMIN_CHAT_ID)
+    raise EnvironmentError(error_message)
+
 # لیست تعطیلات رسمی 1404 (فقط تعطیلات قطعی)
 HOLIDAYS = [
     "01/01", "01/02", "01/03", "01/04",  # نوروز
@@ -66,7 +82,19 @@ def is_holiday():
     month_day = today.strftime("%m/%d")
     weekday = today.weekday()
     weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
-    logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {today.tzname()}")
+    gregorian_date = datetime.now(TEHRAN_TZ).strftime("%Y-%m-%d")
+    logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | تاریخ میلادی: {gregorian_date} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {today.tzname()} | ساعت سرور: {datetime.now(TEHRAN_TZ).strftime('%H:%M:%S')}")
+
+    # هشدار برای مقدار غیرمنتظره weekday
+    if weekday not in range(7):
+        logger.error(f"🚨 خطا: مقدار weekday غیرمعتبر: {weekday}")
+        send_message(f"""
+🚨 <b>خطای بحرانی!</b>
+📅 تاریخ: {get_jalali_date()}
+🔔 مشکل: مقدار weekday غیرمعتبر ({weekday}) برای روز {month_day}
+لطفاً تنظیمات jdatetime و منطقه زمانی را بررسی کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+""", chat_id=ADMIN_CHAT_ID)
 
     # چک کردن استثناها
     if month_day in NON_HOLIDAYS:
@@ -229,10 +257,11 @@ def get_prices():
     global last_prices, last_emergency_update
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
+        logger.info(f"📡 ارسال درخواست به API: {url}")
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
-        logger.info(f"داده‌های API قیمت‌ها: {data}")
+        logger.info(f"📥 داده‌های API دریافت شد: {data}")
 
         update_time = data['gold'][0]['time'] if data['gold'] else datetime.now(TEHRAN_TZ).strftime("%H:%M")
 
@@ -368,7 +397,8 @@ def test_holiday(date_str):
         month_day = date.strftime("%m/%d")
         weekday = date.weekday()
         weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
-        logger.info(f"تست تعطیلی | تاریخ: {date_str} | روز هفته: {weekday_names[weekday]} (weekday={weekday})")
+        gregorian_date = datetime.strptime(date_str, "%Y/%m/%d").replace(tzinfo=TEHRAN_TZ).strftime("%Y-%m-%d")
+        logger.info(f"تست تعطیلی | تاریخ شمسی: {date_str} | تاریخ میلادی: {gregorian_date} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {date.tzname()}")
         
         if month_day in NON_HOLIDAYS:
             logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
@@ -400,7 +430,7 @@ def main():
     is_holiday_14_may = test_holiday("1404/02/14")
     logger.info(f"نتیجه تست: 1404/02/14 {'تعطیل است' if is_holiday_14_may else 'تعطیل نیست'}")
     
-    # تست تعطیلی برای یک جمعه (مثلاً 12 اردیبهشت 1404)
+    # تست تعطیلی برای یک جمعه (12 اردیبهشت 1404)
     logger.info("🔍 تست تعطیلی برای 1404/02/12")
     is_holiday_friday = test_holiday("1404/02/12")
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
