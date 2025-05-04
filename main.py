@@ -36,7 +36,7 @@ TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 try:
     jdatetime_version = pkg_resources.get_distribution("jdatetime").version
     pytz_version = pkg_resources.get_distribution("pytz").version
-    logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={pytz_version}")
+    logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={2024.1}")
 except Exception as e:
     logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 
