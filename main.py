@@ -5,7 +5,11 @@ import time
 import os
 import pytz
 import logging
-import pkg_resources
+try:
+    import pkg_resources
+except ImportError:
+    logging.error("❌ ماژول pkg_resources پیدا نشد. لطفاً مطمئن شوید که setuptools نصب شده است.")
+    pkg_resources = None
 
 # تنظیم لاگ‌گذاری
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,12 +37,15 @@ except AttributeError:
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 # لاگ نسخه‌های پکیج‌ها
-try:
-    jdatetime_version = pkg_resources.get_distribution("jdatetime").version
-    pytz_version = pkg_resources.get_distribution("pytz").version
-    logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={2024.1}")
-except Exception as e:
-    logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
+if pkg_resources:
+    try:
+        jdatetime_version = pkg_resources.get_distribution("jdatetime").version
+        pytz_version = pkg_resources.get_distribution("pytz").version
+        logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={pytz_version}")
+    except Exception as e:
+        logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
+else:
+    logger.warning("⚠️ pkg_resources در دسترس نیست، نسخه پکیج‌ها بررسی نشد")
 
 # چک کردن متغیرهای محیطی
 if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
