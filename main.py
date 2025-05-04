@@ -23,12 +23,11 @@ CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
-# لیست تعطیلات رسمی 1404
+# لیست تعطیلات رسمی 1404 (فقط تعطیلات قطعی)
 HOLIDAYS = [
     "01/01", "01/02", "01/03", "01/04",  # نوروز
     "01/12",  # روز جمهوری اسلامی
     "01/13",  # سیزده‌به‌در
-    "02/14",  # رحلت حضرت فاطمه
     "03/14",  # رحلت امام خمینی
     "03/15",  # قیام 15 خرداد
     "04/03",  # عید فطر
@@ -38,15 +37,13 @@ HOLIDAYS = [
     "08/15",  # تاسوعا
     "08/16",  # عاشورا
     "09/25",  # اربعین
-    "10/03",  # رحلت پیامبر و شهادت امام حسن
-    "10/04",  # شهادت امام رضا
     "11/22",  # پیروزی انقلاب
-    "12/12",  # میلاد پیامبر
 ]
 
 # لیست استثناها (روزهایی که نباید تعطیل باشند)
 NON_HOLIDAYS = [
     "02/10",  # 10 اردیبهشت
+    "02/14",  # 14 اردیبهشت (برای اطمینان)
 ]
 
 # ذخیره قیمت‌ها و متغیرهای جهانی
@@ -55,6 +52,7 @@ last_emergency_update = 0
 last_holiday_notification = None
 start_notification_sent = False
 end_notification_sent = False
+last_suspicious_holiday_alert = None
 
 # تنظیم منطقه زمانی تهران
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
@@ -64,30 +62,69 @@ def get_jalali_date():
 
 def is_holiday():
     """چک کردن اینکه امروز تعطیل است یا نه"""
-    today = jdatetime.datetime.now()
+    today = jdatetime.datetime.now(tz=TEHRAN_TZ)
     month_day = today.strftime("%m/%d")
-    
+    weekday = today.weekday()
+    weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+    logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {today.tzname()}")
+
     # چک کردن استثناها
     if month_day in NON_HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
         return False
     
     # چک کردن اینکه امروز جمعه است
-    if today.weekday() == 4:
+    if weekday == 4:
         logger.info(f"📅 {month_day} جمعه است - تعطیل")
         return True
     
     # چک کردن لیست ثابت تعطیلات
     if month_day in HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست ثابت تعطیلات یافت شد")
+        send_suspicious_holiday_alert(today)
         return True
     
     logger.info(f"📅 {month_day} تعطیل نیست")
     return False
 
+def send_suspicious_holiday_alert(today):
+    """ارسال اعلان برای تعطیلات مشکوک"""
+    global last_suspicious_holiday_alert
+    if not ADMIN_CHAT_ID:
+        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، اعلان تعطیلات مشکوک ارسال نشد")
+        return
+    
+    # فقط یک بار در روز اعلان بفرست
+    current_date = today.date()
+    if last_suspicious_holiday_alert and last_suspicious_holiday_alert.date() == current_date:
+        return
+    
+    month_day = today.strftime("%m/%d")
+    event_text = {
+        "01/01": "نوروز", "01/02": "نوروز", "01/03": "نوروز", "01/04": "نوروز",
+        "01/12": "روز جمهوری اسلامی", "01/13": "سیزده‌به‌در",
+        "03/14": "رحلت امام خمینی", "03/15": "قیام 15 خرداد",
+        "04/03": "عید فطر", "04/04": "عید فطر",
+        "06/10": "عید قربان", "07/18": "عید غدیر",
+        "08/15": "تاسوعا", "08/16": "عاشورا",
+        "09/25": "اربعین", "11/22": "پیروزی انقلاب"
+    }.get(month_day, "نامشخص")
+    
+    message = f"""
+⚠️ <b>هشدار تعطیلات مشکوک!</b>
+📅 تاریخ: {get_jalali_date()}
+🔔 روز {today.strftime('%Y/%m/%d')} ({weekday_names[today.weekday()]}) به عنوان تعطیل تشخیص داده شد
+مناسبت: {event_text}
+لطفاً بررسی کنید که آیا این روز واقعاً تعطیل است!
+▫️ @{CHANNEL_ID.replace('@', '')}
+"""
+    send_message(message, chat_id=ADMIN_CHAT_ID)
+    last_suspicious_holiday_alert = today
+    logger.info("✅ اعلان تعطیلات مشکوک ارسال شد")
+
 def send_holiday_notification():
     """ارسال اعلان تعطیلات"""
-    today = jdatetime.datetime.now()
+    today = jdatetime.datetime.now(tz=TEHRAN_TZ)
     month_day = today.strftime("%m/%d")
     event_text = "تعطیل رسمی"
     for holiday in HOLIDAYS:
@@ -99,7 +136,6 @@ def send_holiday_notification():
                 "01/04": "نوروز",
                 "01/12": "روز جمهوری اسلامی",
                 "01/13": "سیزده‌به‌در",
-                "02/14": "رحلت حضرت فاطمه",
                 "03/14": "رحلت امام خمینی",
                 "03/15": "قیام 15 خرداد",
                 "04/03": "عید فطر",
@@ -109,10 +145,7 @@ def send_holiday_notification():
                 "08/15": "تاسوعا",
                 "08/16": "عاشورا",
                 "09/25": "اربعین",
-                "10/03": "رحلت پیامبر و شهادت امام حسن",
-                "10/04": "شهادت امام رضا",
-                "11/22": "پیروزی انقلاب",
-                "12/12": "میلاد پیامبر"
+                "11/22": "پیروزی انقلاب"
             }.get(month_day, "تعطیل رسمی")
             break
     
@@ -128,7 +161,6 @@ def send_holiday_notification():
 
 def send_start_notification():
     """ارسال اعلان شروع روز کاری و پیام به ادمین"""
-    # اعلان به کانال
     message = f"""
 📢 <b>شروع آپدیت قیمت‌ها!</b>
 📅 تاریخ: {get_jalali_date()}
@@ -139,7 +171,6 @@ def send_start_notification():
     send_message(message)
     logger.info("✅ اعلان شروع روز کاری ارسال شد")
     
-    # پیام به ادمین
     if ADMIN_CHAT_ID:
         admin_message = f"""
 ✅ امروز پیام ارسال شد در روز {get_jalali_date()}
@@ -187,6 +218,7 @@ def get_prices():
         prices = {
             'update_time': update_time,
             'gold_ounce': find_item_by_symbol(data['gold'], 'XAUUSD') or {'price': 'N/A', 'change_percent': 0},
+ arrows
             'gold_18k': find_item_by_symbol(data['gold'], 'IR_GOLD_18K') or {'price': 'N/A', 'change_percent': 0},
             'coin_new': find_item_by_symbol(data['gold'], 'IR_COIN_BAHAR') or {'price': 'N/A', 'change_percent': 0},
             'coin_old': find_item_by_symbol(data['gold'], 'IR_COIN_EMAMI') or {'price': 'N/A', 'change_percent': 0},
@@ -309,8 +341,40 @@ def is_within_update_hours():
     current_hour = current_time.hour
     return START_HOUR <= current_hour < END_HOUR
 
+def test_holiday(date_str):
+    """تابع تست برای چک کردن تعطیلی یک تاریخ خاص"""
+    try:
+        date = jdatetime.datetime.strptime(date_str, "%Y/%m/%d")
+        month_day = date.strftime("%m/%d")
+        weekday = date.weekday()
+        weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+        logger.info(f"تست تعطیلی | تاریخ: {date_str} | روز هفته: {weekday_names[weekday]} (weekday={weekday})")
+        
+        if month_day in NON_HOLIDAYS:
+            logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
+            return False
+        
+        if weekday == 4:
+            logger.info(f"📅 {month_day} جمعه است - تعطیل")
+            return True
+        
+        if month_day in HOLIDAYS:
+            logger.info(f"📅 {month_day} در لیست ثابت تعطیلات یافت شد")
+            return True
+        
+        logger.info(f"📅 {month_day} تعطیل نیست")
+        return False
+    except Exception as e:
+        logger.error(f"❌ خطا در تست تعطیلی: {e}")
+        return None
+
 def main():
-    global last_holiday_notification, start_notification_sent, end_notification_sent
+    global last_holiday_notification, start_notification_sent, end_notification_sent, last_suspicious_holiday_alert
+    
+    # تست تعطیلی برای 14 اردیبهشت 1404
+    logger.info("🔍 تست تعطیلی برای 1404/02/14")
+    is_holiday_14_may = test_holiday("1404/02/14")
+    logger.info(f"نتیجه تست: 1404/02/14 {'تعطیل است' if is_holiday_14_may else 'تعطیل نیست'}")
     
     while True:
         current_time = datetime.now(TEHRAN_TZ)
@@ -322,6 +386,7 @@ def main():
             start_notification_sent = False
             end_notification_sent = False
             last_holiday_notification = None
+            last_suspicious_holiday_alert = None
         
         if is_holiday():
             if (current_hour == START_HOUR and current_minute == 0 and 
