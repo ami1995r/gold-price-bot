@@ -5,6 +5,7 @@ import time
 import os
 import pytz
 import logging
+import pkg_resources
 
 # تنظیم لاگ‌گذاری
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -24,7 +25,20 @@ MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
 # تنظیم منطقه زمانی تهران
+try:
+    os.environ['TZ'] = 'Asia/Tehran'
+    time.tzset()  # اعمال منطقه زمانی در سیستم
+except AttributeError:
+    logger.warning("⚠️ tzset در این سیستم پشتیبانی نمی‌شود، به pytz وابسته هستیم")
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
+
+# لاگ نسخه‌های پکیج‌ها
+try:
+    jdatetime_version = pkg_resources.get_distribution("jdatetime").version
+    pytz_version = pkg_resources.get_distribution("pytz").version
+    logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={pytz_version}")
+except Exception as e:
+    logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 
 # چک کردن متغیرهای محیطی
 if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
@@ -32,26 +46,6 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
                                          ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
-    if ADMIN_CHAT_ID:
-        send_message(f"""
-🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
-🔔 مشکل: {error_message}
-لطفاً تنظیمات محیطی را بررسی کنید!
-▫️ @{CHANNEL_ID.replace('@', '') if CHANNEL_ID else 'UnknownChannel'}
-""", chat_id=ADMIN_CHAT_ID)
-    raise EnvironmentError(error_message)
-
-# چک کردن منطقه زمانی سرور
-if datetime.now().tzinfo is None or datetime.now(TEHRAN_TZ).tzname() != 'Asia/Tehran':
-    logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {datetime.now().tzinfo or 'None'}")
-    send_message(f"""
-🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
-🔔 مشکل: منطقه زمانی سرور اشتباه است ({datetime.now().tzinfo or 'None'})، باید Asia/Tehran باشد
-لطفاً متغیر محیطی TZ را روی Asia/Tehran تنظیم کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
-""", chat_id=ADMIN_CHAT_ID)
 
 # لیست تعطیلات رسمی 1404 (فقط تعطیلات قطعی)
 HOLIDAYS = [
@@ -83,6 +77,40 @@ last_holiday_notification = None
 start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
+
+def send_message(text, chat_id=None):
+    """ارسال پیام به کانال یا ادمین"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        target_chat_id = chat_id or CHANNEL_ID
+        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
+        response = requests.post(url, json={
+            'chat_id': target_chat_id,
+            'text': text,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        })
+        logger.info(f"📥 پاسخ تلگرام: {response.text}")
+        response.raise_for_status()
+        logger.info("✅ پیام با موفقیت ارسال شد")
+    except Exception as e:
+        logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
+
+def check_timezone():
+    """چک کردن منطقه زمانی سرور"""
+    current_tz = datetime.now(TEHRAN_TZ).tzname()
+    if current_tz != 'Asia/Tehran':
+        logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {current_tz}")
+        send_message(f"""
+🚨 <b>خطای بحرانی!</b>
+📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
+🔔 مشکل: منطقه زمانی سرور اشتباه است ({current_tz})، باید Asia/Tehran باشد
+لطفاً متغیر محیطی TZ را روی Asia/Tehran تنظیم کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+""", chat_id=ADMIN_CHAT_ID)
+        return False
+    logger.info(f"✅ منطقه زمانی سرور درست است: {current_tz}")
+    return True
 
 def get_jalali_date():
     return jdatetime.datetime.now(tz=TEHRAN_TZ).strftime("%Y/%m/%d")
@@ -342,24 +370,6 @@ def get_prices():
         logger.error(f"❌ خطا در دریافت داده قیمت‌ها: {e}")
         return None
 
-def send_message(text, chat_id=None):
-    """ارسال پیام به کانال یا ادمین"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        target_chat_id = chat_id or CHANNEL_ID
-        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
-        response = requests.post(url, json={
-            'chat_id': target_chat_id,
-            'text': text,
-            'parse_mode': 'HTML',
-            'disable_web_page_preview': True
-        })
-        logger.info(f"📥 پاسخ تلگرام: {response.text}")
-        response.raise_for_status()
-        logger.info("✅ پیام با موفقیت ارسال شد")
-    except Exception as e:
-        logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
-
 def create_message(prices):
     """ایجاد پیام قیمت‌ها"""
     return f"""
@@ -431,6 +441,9 @@ def test_holiday(date_str):
 
 def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent, last_suspicious_holiday_alert
+    
+    # چک کردن منطقه زمانی
+    check_timezone()
     
     # ارسال پیام تست به ADMIN_CHAT_ID
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
