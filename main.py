@@ -54,7 +54,7 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
 
-# لیست تعطیلات رسمی 1404 (به‌روز شده)
+# لیست تعطیلات رسمی 1404
 HOLIDAYS = [
     "01/01", "01/02", "01/03", "01/04",  # نوروز
     "01/12",  # روز جمهوری اسلامی
@@ -114,19 +114,39 @@ def send_message(text, chat_id=None):
 
 def check_timezone():
     """چک کردن منطقه زمانی سرور"""
-    current_tz = datetime.now(TEHRAN_TZ).tzname()
-    if current_tz != 'Asia/Tehran':
-        logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {current_tz}")
-        send_message(f"""
+    try:
+        # بررسی اینکه TEHRAN_TZ درست تنظیم شده
+        current_time = datetime.now(TEHRAN_TZ)
+        expected_tz = 'Asia/Tehran'
+        actual_tz = current_time.tzname()
+        
+        # چک کردن offset برای اطمینان
+        offset = current_time.utcoffset().total_seconds() / 3600  # تبدیل به ساعت
+        expected_offset = 3.5  # Asia/Tehran معمولاً +03:30 است
+        
+        if actual_tz == expected_tz and abs(offset - expected_offset) < 0.1:
+            logger.info(f"✅ منطقه زمانی سرور درست است: {actual_tz} (offset: {offset} ساعت)")
+            return True
+        else:
+            logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {actual_tz} (offset: {offset} ساعت)")
+            send_message(f"""
 🚨 <b>خطای بحرانی!</b>
 📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
-🔔 مشکل: منطقه زمانی سرور اشتباه است ({current_tz})، باید Asia/Tehran باشد
+🔔 مشکل: منطقه زمانی سرور اشتباه است ({actual_tz}, offset: {offset} ساعت)، باید {expected_tz} باشد
 لطفاً متغیر محیطی TZ را روی Asia/Tehran تنظیم کنید!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """, chat_id=ADMIN_CHAT_ID)
+            return False
+    except Exception as e:
+        logger.error(f"❌ خطا در بررسی منطقه زمانی: {e}")
+        send_message(f"""
+🚨 <b>خطای بحرانی!</b>
+📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
+🔔 مشکل: خطا در بررسی منطقه زمانی: {e}
+لطفاً تنظیمات سرور و کتابخانه pytz را بررسی کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+""", chat_id=ADMIN_CHAT_ID)
         return False
-    logger.info(f"✅ منطقه زمانی سرور درست است: {current_tz}")
-    return True
 
 def get_jalali_date():
     return jdatetime.datetime.now(tz=TEHRAN_TZ).strftime("%Y/%m/%d")
@@ -472,7 +492,9 @@ def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent, last_suspicious_holiday_alert
     
     # چک کردن منطقه زمانی
-    check_timezone()
+    if not check_timezone():
+        logger.error("❌ منطقه زمانی سرور اشتباه است، اجرای برنامه متوقف شد")
+        return
     
     # ارسال پیام تست به ADMIN_CHAT_ID
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
