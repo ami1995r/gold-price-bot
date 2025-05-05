@@ -24,7 +24,7 @@ CHECK_INTERVAL = 300    # هر 5 دقیقه
 START_HOUR = 7          # ساعت 07:30 صبح UTC (معادل 11:00 تهران)
 END_HOUR = 16           # ساعت 16:30 عصر UTC (معادل 20:00 تهران)
 TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساعت)
-CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
+CHANGE_THRESHOLD = 5.0  # آستانه تغییر قیمت (5٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
@@ -341,7 +341,7 @@ def get_prices():
 
             if significant_changes:
                 emergency_message = f"""
-🚨 <b>هشدار تغییر بزرگ قیمت!</b>
+📢 <b>تغییر قیمت فوری!</b>
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {datetime.now().strftime('%H:%M')}
 """
@@ -360,7 +360,7 @@ def get_prices():
                         'aed': 'درهم',
                         'usdt': 'تتر'
                     }.get(key, key)
-                    emergency_message += f"{get_price_change_emoji(change_percent)} {name}: {format_price(new_price)} تومان\n"
+                    emergency_message += f"{get_price_change_emoji(change_percent)} {name} به {format_price(new_price)} تومان رسید\n"
                 emergency_message += f"▫️ @{CHANNEL_ID.replace('@', '')}"
                 send_message(emergency_message)
                 last_emergency_update = current_time
