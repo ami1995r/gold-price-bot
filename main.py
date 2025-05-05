@@ -3,7 +3,6 @@ from datetime import datetime
 import jdatetime
 import time
 import os
-import pytz
 import logging
 try:
     import pkg_resources
@@ -22,26 +21,18 @@ API_KEY = os.getenv('API_KEY')
 ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
 UPDATE_INTERVAL = 1800  # هر 30 دقیقه
 CHECK_INTERVAL = 300    # هر 5 دقیقه
-START_HOUR = 11         # ساعت شروع آپدیت
-END_HOUR = 20           # ساعت پایان آپدیت
+START_HOUR = 7          # ساعت 07:30 صبح UTC (معادل 11:00 تهران)
+END_HOUR = 16           # ساعت 16:30 عصر UTC (معادل 20:00 تهران)
+TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساعت)
 CHANGE_THRESHOLD = 2.0  # آستانه تغییر قیمت
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
-
-# تنظیم منطقه زمانی تهران
-try:
-    os.environ['TZ'] = 'Asia/Tehran'
-    time.tzset()  # اعمال منطقه زمانی در سیستم
-except AttributeError:
-    logger.warning("⚠️ tzset در این سیستم پشتیبانی نمی‌شود، به pytz وابسته هستیم")
-TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 # لاگ نسخه‌های پکیج‌ها
 if pkg_resources:
     try:
         jdatetime_version = pkg_resources.get_distribution("jdatetime").version
-        pytz_version = pkg_resources.get_distribution("pytz").version
-        logger.info(f"📦 نسخه‌های پکیج‌ها: jdatetime={jdatetime_version}, pytz={pytz_version}")
+        logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}")
     except Exception as e:
         logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 else:
@@ -54,28 +45,36 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
 
-# لیست تعطیلات رسمی 1404
+# لیست تعطیلات 1404 (جمعه‌ها + تعطیلات رسمی)
 HOLIDAYS = [
     "01/01", "01/02", "01/03", "01/04",  # نوروز
+    "01/07", "01/14", "01/21", "01/28",  # جمعه‌ها
     "01/12",  # روز جمهوری اسلامی
     "01/13",  # سیزده‌به‌در
     "02/03", "02/04",  # عید فطر
+    "02/05", "02/12", "02/19", "02/26",  # جمعه‌ها
+    "03/02", "03/09", "03/16", "03/23", "03/30",  # جمعه‌ها (03/16 عید قربان هم هست)
     "03/14",  # رحلت امام خمینی
     "03/15",  # قیام 15 خرداد
-    "03/16",  # عید قربان
     "03/24",  # عید غدیر خم
+    "04/06", "04/13", "04/20", "04/27",  # جمعه‌ها
     "04/14",  # تاسوعا
     "04/15",  # عاشورا
+    "05/03", "05/10", "05/17", "05/24", "05/31",  # جمعه‌ها (05/31 رحلت رسول و شهادت امام حسن هم هست)
     "05/23",  # اربعین
-    "05/31",  # رحلت رسول اکرم و شهادت امام حسن
     "06/02",  # شهادت امام رضا
+    "06/07", "06/14", "06/21", "06/28",  # جمعه‌ها
     "06/10",  # شهادت امام حسن عسکری
     "06/19",  # میلاد رسول اکرم و امام جعفر صادق
+    "07/05", "07/12", "07/19", "07/26",  # جمعه‌ها
+    "08/03", "08/10", "08/17", "08/24",  # جمعه‌ها
+    "09/01", "09/08", "09/15", "09/22", "09/29",  # جمعه‌ها
     "09/03",  # شهادت حضرت فاطمه
-    "10/13",  # ولادت امام علی
-    "10/27",  # مبعث رسول اکرم
+    "10/06", "10/13", "10/20", "10/27",  # جمعه‌ها (10/13 ولادت امام علی، 10/27 مبعث هم هست)
+    "11/04", "11/11", "11/18", "11/25",  # جمعه‌ها
     "11/15",  # ولادت حضرت قائم
     "11/22",  # پیروزی انقلاب اسلامی
+    "12/02", "12/09", "12/16", "12/23",  # جمعه‌ها
     "12/20",  # شهادت امام علی
     "12/29",  # روز ملی شدن صنعت نفت
 ]
@@ -93,6 +92,7 @@ last_holiday_notification = None
 start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
+last_update_time = 0
 
 def send_message(text, chat_id=None):
     """ارسال پیام به کانال یا ادمین"""
@@ -112,78 +112,25 @@ def send_message(text, chat_id=None):
     except Exception as e:
         logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
 
-def check_timezone():
-    """چک کردن منطقه زمانی سرور"""
-    try:
-        # بررسی اینکه TEHRAN_TZ درست تنظیم شده
-        current_time = datetime.now(TEHRAN_TZ)
-        expected_tz = 'Asia/Tehran'
-        actual_tz = current_time.tzname()
-        
-        # چک کردن offset برای اطمینان
-        offset = current_time.utcoffset().total_seconds() / 3600  # تبدیل به ساعت
-        expected_offset = 3.5  # Asia/Tehran معمولاً +03:30 است
-        
-        if actual_tz == expected_tz and abs(offset - expected_offset) < 0.1:
-            logger.info(f"✅ منطقه زمانی سرور درست است: {actual_tz} (offset: {offset} ساعت)")
-            return True
-        else:
-            logger.error(f"🚨 خطا: منطقه زمانی سرور اشتباه است: {actual_tz} (offset: {offset} ساعت)")
-            send_message(f"""
-🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
-🔔 مشکل: منطقه زمانی سرور اشتباه است ({actual_tz}, offset: {offset} ساعت)، باید {expected_tz} باشد
-لطفاً متغیر محیطی TZ را روی Asia/Tehran تنظیم کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
-""", chat_id=ADMIN_CHAT_ID)
-            return False
-    except Exception as e:
-        logger.error(f"❌ خطا در بررسی منطقه زمانی: {e}")
-        send_message(f"""
-🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {jdatetime.datetime.now(tz=TEHRAN_TZ).strftime('%Y/%m/%d')}
-🔔 مشکل: خطا در بررسی منطقه زمانی: {e}
-لطفاً تنظیمات سرور و کتابخانه pytz را بررسی کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
-""", chat_id=ADMIN_CHAT_ID)
-        return False
-
 def get_jalali_date():
-    return jdatetime.datetime.now(tz=TEHRAN_TZ).strftime("%Y/%m/%d")
+    """گرفتن تاریخ شمسی بدون منطقه زمانی"""
+    return jdatetime.datetime.now().strftime("%Y/%m/%d")
 
 def is_holiday():
     """چک کردن اینکه امروز تعطیل است یا نه"""
-    today = jdatetime.datetime.now(tz=TEHRAN_TZ)
+    today = jdatetime.datetime.now()
     month_day = today.strftime("%m/%d")
-    weekday = today.weekday()
-    weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
-    gregorian_date = datetime.now(TEHRAN_TZ).strftime("%Y-%m-%d")
-    logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | تاریخ میلادی: {gregorian_date} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {today.tzname()} | ساعت سرور: {datetime.now(TEHRAN_TZ).strftime('%H:%M:%S')}")
-
-    # هشدار برای مقدار غیرمنتظره weekday
-    if weekday not in range(7):
-        logger.error(f"🚨 خطا: مقدار weekday غیرمعتبر: {weekday}")
-        send_message(f"""
-🚨 <b>خطای بحرانی!</b>
-📅 تاریخ: {get_jalali_date()}
-🔔 مشکل: مقدار weekday غیرمعتبر ({weekday}) برای روز {month_day}
-لطفاً تنظیمات jdatetime و منطقه زمانی را بررسی کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
-""", chat_id=ADMIN_CHAT_ID)
+    gregorian_date = datetime.now().strftime("%Y-%m-%d")
+    logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | تاریخ میلادی: {gregorian_date}")
 
     # چک کردن استثناها
     if month_day in NON_HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
         return False
     
-    # چک کردن اینکه امروز جمعه است
-    if weekday == 4:
-        logger.info(f"📅 {month_day} جمعه است - تعطیل")
-        return True
-    
-    # چک کردن لیست ثابت تعطیلات
+    # چک کردن لیست تعطیلات
     if month_day in HOLIDAYS:
-        logger.info(f"📅 {month_day} در لیست ثابت تعطیلات یافت شد")
+        logger.info(f"📅 {month_day} در لیست تعطیلات یافت شد")
         send_suspicious_holiday_alert(today)
         return True
     
@@ -204,32 +151,36 @@ def send_suspicious_holiday_alert(today):
         return
     
     month_day = today.strftime("%m/%d")
-    weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
     event_text = {
         "01/01": "نوروز", "01/02": "نوروز", "01/03": "نوروز", "01/04": "نوروز",
+        "01/07": "جمعه", "01/14": "جمعه", "01/21": "جمعه", "01/28": "جمعه",
         "01/12": "روز جمهوری اسلامی", "01/13": "سیزده‌به‌در",
         "02/03": "عید فطر", "02/04": "عید فطر",
-        "03/14": "رحلت امام خمینی", "03/15": "قیام 15 خرداد",
-        "03/16": "عید قربان", "03/24": "عید غدیر خم",
+        "02/05": "جمعه", "02/12": "جمعه", "02/19": "جمعه", "02/26": "جمعه",
+        "03/02": "جمعه", "03/09": "جمعه", "03/16": "عید قربان", "03/23": "جمعه", "03/30": "جمعه",
+        "03/14": "رحلت امام خمینی", "03/15": "قیام 15 خرداد", "03/24": "عید غدیر خم",
+        "04/06": "جمعه", "04/13": "جمعه", "04/20": "جمعه", "04/27": "جمعه",
         "04/14": "تاسوعای حسینی", "04/15": "عاشورای حسینی",
+        "05/03": "جمعه", "05/10": "جمعه", "05/17": "جمعه", "05/24": "جمعه", "05/31": "رحلت رسول اکرم و شهادت امام حسن",
         "05/23": "اربعین حسینی",
-        "05/31": "رحلت رسول اکرم و شهادت امام حسن",
         "06/02": "شهادت امام رضا",
-        "06/10": "شهادت امام حسن عسکری",
-        "06/19": "میلاد رسول اکرم و امام جعفر صادق",
+        "06/07": "جمعه", "06/14": "جمعه", "06/21": "جمعه", "06/28": "جمعه",
+        "06/10": "شهادت امام حسن عسکری", "06/19": "میلاد رسول اکرم و امام جعفر صادق",
+        "07/05": "جمعه", "07/12": "جمعه", "07/19": "جمعه", "07/26": "جمعه",
+        "08/03": "جمعه", "08/10": "جمعه", "08/17": "جمعه", "08/24": "جمعه",
+        "09/01": "جمعه", "09/08": "جمعه", "09/15": "جمعه", "09/22": "جمعه", "09/29": "جمعه",
         "09/03": "شهادت حضرت فاطمه",
-        "10/13": "ولادت امام علی",
-        "10/27": "مبعث رسول اکرم",
-        "11/15": "ولادت حضرت قائم",
-        "11/22": "پیروزی انقلاب اسلامی",
-        "12/20": "شهادت امام علی",
-        "12/29": "روز ملی شدن صنعت نفت"
+        "10/06": "جمعه", "10/13": "ولادت امام علی", "10/20": "جمعه", "10/27": "مبعث رسول اکرم",
+        "11/04": "جمعه", "11/11": "جمعه", "11/18": "جمعه", "11/25": "جمعه",
+        "11/15": "ولادت حضرت قائم", "11/22": "پیروزی انقلاب اسلامی",
+        "12/02": "جمعه", "12/09": "جمعه", "12/16": "جمعه", "12/23": "جمعه",
+        "12/20": "شهادت امام علی", "12/29": "روز ملی شدن صنعت نفت"
     }.get(month_day, "نامشخص")
     
     message = f"""
 ⚠️ <b>هشدار تعطیلات مشکوک!</b>
 📅 تاریخ: {get_jalali_date()}
-🔔 روز {today.strftime('%Y/%m/%d')} ({weekday_names[today.weekday()]}) به عنوان تعطیل تشخیص داده شد
+🔔 روز {today.strftime('%Y/%m/%d')} به عنوان تعطیل تشخیص داده شد
 مناسبت: {event_text}
 لطفاً بررسی کنید که آیا این روز واقعاً تعطیل است!
 ▫️ @{CHANNEL_ID.replace('@', '')}
@@ -241,32 +192,33 @@ def send_suspicious_holiday_alert(today):
 
 def send_holiday_notification():
     """ارسال اعلان تعطیلات"""
-    today = jdatetime.datetime.now(tz=TEHRAN_TZ)
+    today = jdatetime.datetime.now()
     month_day = today.strftime("%m/%d")
-    event_text = "تعطیل رسمی"
-    for holiday in HOLIDAYS:
-        if holiday == month_day:
-            event_text = {
-                "01/01": "نوروز", "01/02": "نوروز", "01/03": "نوروز", "01/04": "نوروز",
-                "01/12": "روز جمهوری اسلامی", "01/13": "سیزده‌به‌در",
-                "02/03": "عید فطر", "02/04": "عید فطر",
-                "03/14": "رحلت امام خمینی", "03/15": "قیام 15 خرداد",
-                "03/16": "عید قربان", "03/24": "عید غدیر خم",
-                "04/14": "تاسوعای حسینی", "04/15": "عاشورای حسینی",
-                "05/23": "اربعین حسینی",
-                "05/31": "رحلت رسول اکرم و شهادت امام حسن",
-                "06/02": "شهادت امام رضا",
-                "06/10": "شهادت امام حسن عسکری",
-                "06/19": "میلاد رسول اکرم و امام جعفر صادق",
-                "09/03": "شهادت حضرت فاطمه",
-                "10/13": "ولادت امام علی",
-                "10/27": "مبعث رسول اکرم",
-                "11/15": "ولادت حضرت قائم",
-                "11/22": "پیروزی انقلاب اسلامی",
-                "12/20": "شهادت امام علی",
-                "12/29": "روز ملی شدن صنعت نفت"
-            }.get(month_day, "تعطیل رسمی")
-            break
+    event_text = {
+        "01/01": "نوروز", "01/02": "نوروز", "01/03": "نوروز", "01/04": "نوروز",
+        "01/07": "جمعه", "01/14": "جمعه", "01/21": "جمعه", "01/28": "جمعه",
+        "01/12": "روز جمهوری اسلامی", "01/13": "سیزده‌به‌در",
+        "02/03": "عید فطر", "02/04": "عید فطر",
+        "02/05": "جمعه", "02/12": "جمعه", "02/19": "جمعه", "02/26": "جمعه",
+        "03/02": "جمعه", "03/09": "جمعه", "03/16": "عید قربان", "03/23": "جمعه", "03/30": "جمعه",
+        "03/14": "رحلت امام خمینی", "03/15": "قیام 15 خرداد", "03/24": "عید غدیر خم",
+        "04/06": "جمعه", "04/13": "جمعه", "04/20": "جمعه", "04/27": "جمعه",
+        "04/14": "تاسوعای حسینی", "04/15": "عاشورای حسینی",
+        "05/03": "جمعه", "05/10": "جمعه", "05/17": "جمعه", "05/24": "جمعه", "05/31": "رحلت رسول اکرم و شهادت امام حسن",
+        "05/23": "اربعین حسینی",
+        "06/02": "شهادت امام رضا",
+        "06/07": "جمعه", "06/14": "جمعه", "06/21": "جمعه", "06/28": "جمعه",
+        "06/10": "شهادت امام حسن عسکری", "06/19": "میلاد رسول اکرم و امام جعفر صادق",
+        "07/05": "جمعه", "07/12": "جمعه", "07/19": "جمعه", "07/26": "جمعه",
+        "08/03": "جمعه", "08/10": "جمعه", "08/17": "جمعه", "08/24": "جمعه",
+        "09/01": "جمعه", "09/08": "جمعه", "09/15": "جمعه", "09/22": "جمعه", "09/29": "جمعه",
+        "09/03": "شهادت حضرت فاطمه",
+        "10/06": "جمعه", "10/13": "ولادت امام علی", "10/20": "جمعه", "10/27": "مبعث رسول اکرم",
+        "11/04": "جمعه", "11/11": "جمعه", "11/18": "جمعه", "11/25": "جمعه",
+        "11/15": "ولادت حضرت قائم", "11/22": "پیروزی انقلاب اسلامی",
+        "12/02": "جمعه", "12/09": "جمعه", "12/16": "جمعه", "12/23": "جمعه",
+        "12/20": "شهادت امام علی", "12/29": "روز ملی شدن صنعت نفت"
+    }.get(month_day, "تعطیل رسمی")
     
     message = f"""
 📢 <b>امروز تعطیله!</b>
@@ -283,7 +235,7 @@ def send_start_notification():
     message = f"""
 📢 <b>شروع آپدیت قیمت‌ها!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+⏰ ساعت: {datetime.now().strftime('%H:%M')}
 هر 30 دقیقه قیمت‌های جدید طلا، سکه و ارز رو می‌فرستیم!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -307,7 +259,7 @@ def send_test_admin_message():
     message = f"""
 🧪 <b>پیام تست برای ADMIN_CHAT_ID</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+⏰ زمان: {datetime.now().strftime('%H:%M')}
 این پیام برای اطمینان از تنظیم درست ADMIN_CHAT_ID ارسال شده است.
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -320,7 +272,7 @@ def send_end_notification():
     message = f"""
 📢 <b>پایان آپدیت قیمت‌ها!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+⏰ ساعت: {datetime.now().strftime('%H:%M')}
 آپدیت امروز تموم شد. فردا ساعت 11 صبح ادامه می‌دیم!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -351,7 +303,7 @@ def get_prices():
         data = response.json()
         logger.info(f"📥 داده‌های API دریافت شد: {data}")
 
-        update_time = data['gold'][0]['time'] if data['gold'] else datetime.now(TEHRAN_TZ).strftime("%H:%M")
+        update_time = data['gold'][0]['time'] if data['gold'] else datetime.now().strftime("%H:%M")
 
         prices = {
             'update_time': update_time,
@@ -391,7 +343,7 @@ def get_prices():
                 emergency_message = f"""
 🚨 <b>هشدار تغییر بزرگ قیمت!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {datetime.now(TEHRAN_TZ).strftime('%H:%M')}
+⏰ زمان: {datetime.now().strftime('%H:%M')}
 """
                 for key, change_percent, new_price in significant_changes:
                     name = {
@@ -434,7 +386,7 @@ def create_message(prices):
 <b>سکه</b>
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
-{get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
+{get_price_change_emoji(prices['gold_18k']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
 {get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
 {get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
 
@@ -455,31 +407,33 @@ def format_price(price):
         return "نامشخص"
 
 def is_within_update_hours():
-    """چک کردن بازه آپدیت"""
-    current_time = datetime.now(TEHRAN_TZ)
-    current_hour = current_time.hour
+    """چک کردن بازه آپدیت با ساعت سرور"""
+    current_time = datetime.now()
+    # اعمال offset برای تبدیل به ساعت تهران
+    current_hour = (current_time.hour + int(TIME_OFFSET)) % 24
+    current_minute = current_time.minute + (TIME_OFFSET % 1 * 60)
+    if current_minute >= 60:
+        current_hour = (current_hour + 1) % 24
+        current_minute -= 60
+    # تنظیم ساعت تهران
+    tehran_time = f"{int(current_hour):02d}:{int(current_minute):02d}"
+    logger.info(f"⏰ زمان سرور: {current_time.strftime('%H:%M')} | زمان تهران: {tehran_time}")
     return START_HOUR <= current_hour < END_HOUR
 
 def test_holiday(date_str):
     """تابع تست برای چک کردن تعطیلی یک تاریخ خاص"""
     try:
-        date = jdatetime.datetime.strptime(date_str, "%Y/%m/%d").replace(tzinfo=TEHRAN_TZ)
+        date = jdatetime.datetime.strptime(date_str, "%Y/%m/%d")
         month_day = date.strftime("%m/%d")
-        weekday = date.weekday()
-        weekday_names = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
-        gregorian_date = datetime.strptime(date_str, "%Y/%m/%d").replace(tzinfo=TEHRAN_TZ).strftime("%Y-%m-%d")
-        logger.info(f"تست تعطیلی | تاریخ شمسی: {date_str} | تاریخ میلادی: {gregorian_date} | روز هفته: {weekday_names[weekday]} (weekday={weekday}) | منطقه زمانی: {date.tzname()}")
+        gregorian_date = datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y-%m-%d")
+        logger.info(f"تست تعطیلی | تاریخ شمسی: {date_str} | تاریخ میلادی: {gregorian_date}")
         
         if month_day in NON_HOLIDAYS:
             logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
             return False
         
-        if weekday == 4:
-            logger.info(f"📅 {month_day} جمعه است - تعطیل")
-            return True
-        
         if month_day in HOLIDAYS:
-            logger.info(f"📅 {month_day} در لیست ثابت تعطیلات یافت شد")
+            logger.info(f"📅 {month_day} در لیست تعطیلات یافت شد")
             return True
         
         logger.info(f"📅 {month_day} تعطیل نیست")
@@ -489,12 +443,8 @@ def test_holiday(date_str):
         return None
 
 def main():
-    global last_holiday_notification, start_notification_sent, end_notification_sent, last_suspicious_holiday_alert
-    
-    # چک کردن منطقه زمانی
-    if not check_timezone():
-        logger.error("❌ منطقه زمانی سرور اشتباه است، اجرای برنامه متوقف شد")
-        return
+    global last_holiday_notification, start_notification_sent, end_notification_sent
+    global last_suspicious_holiday_alert, last_update_time
     
     # ارسال پیام تست به ADMIN_CHAT_ID
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
@@ -511,19 +461,23 @@ def main():
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
     
     while True:
-        current_time = datetime.now(TEHRAN_TZ)
-        current_hour = current_time.hour
-        current_minute = current_time.minute
+        current_time = datetime.now()
+        current_hour = (current_time.hour + int(TIME_OFFSET)) % 24
+        current_minute = current_time.minute + (TIME_OFFSET % 1 * 60)
+        if current_minute >= 60:
+            current_hour = (current_hour + 1) % 24
+            current_minute -= 60
         
-        # ریست پرچم‌ها در شروع روز
-        if current_hour == 0 and current_minute == 0:
+        # ریست پرچم‌ها در شروع روز (ساعت 00:00 تهران)
+        if current_hour == 0 and current_minute < 30:
             start_notification_sent = False
             end_notification_sent = False
             last_holiday_notification = None
             last_suspicious_holiday_alert = None
+            logger.info("🔄 پرچم‌ها برای روز جدید ریست شدند")
         
         if is_holiday():
-            if (current_hour == START_HOUR and current_minute == 0 and 
+            if (current_hour == START_HOUR and current_minute < 30 and 
                 (last_holiday_notification is None or 
                  last_holiday_notification.date() != current_time.date())):
                 send_holiday_notification()
@@ -531,35 +485,38 @@ def main():
             logger.info(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
             time.sleep(CHECK_INTERVAL)
         elif is_within_update_hours():
-            if current_hour == START_HOUR and current_minute == 0 and not start_notification_sent:
+            if current_hour == START_HOUR and current_minute < 30 and not start_notification_sent:
                 send_start_notification()
                 start_notification_sent = True
             
-            logger.info(f"⏰ زمان فعلی (تهران): {current_time.strftime('%H:%M')} - در بازه آپدیت")
-            prices = get_prices()
-            if prices:
-                message = create_message(prices)
-                send_message(message)
-                logger.info(f"✅ قیمت‌ها در {current_time.strftime('%H:%M')} ارسال شدند")
+            # چک کردن فاصله زمانی از آخرین آپدیت
+            if time.time() - last_update_time >= UPDATE_INTERVAL:
+                logger.info(f"⏰ زمان تهران: {current_hour:02d}:{int(current_minute):02d} - در بازه آپدیت")
+                prices = get_prices()
+                if prices:
+                    message = create_message(prices)
+                    send_message(message)
+                    logger.info(f"✅ قیمت‌ها در {current_hour:02d}:{int(current_minute):02d} ارسال شدند")
+                    last_update_time = time.time()
+                else:
+                    logger.error("❌ خطا در دریافت قیمت‌ها")
             else:
-                logger.error("❌ خطا در دریافت قیمت‌ها")
-            time.sleep(UPDATE_INTERVAL)
+                logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
+            time.sleep(CHECK_INTERVAL)
         else:
-            if current_hour == END_HOUR and current_minute == 0 and not end_notification_sent:
+            if current_hour == END_HOUR and current_minute < 30 and not end_notification_sent:
                 send_end_notification()
                 end_notification_sent = True
             
-            logger.info(f"⏰ زمان فعلی (تهران): {current_time.strftime('%H:%M')} - خارج از بازه آپدیت")
+            logger.info(f"⏰ زمان تهران: {current_hour:02d}:{int(current_minute):02d} - خارج از بازه آپدیت")
             time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
     try:
         import jdatetime
-        import pytz
     except ImportError:
         import os
-        os.system("pip install jdatetime pytz")
+        os.system("pip install jdatetime")
         import jdatetime
-        import pytz
     
     main()
