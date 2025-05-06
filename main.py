@@ -21,10 +21,10 @@ API_KEY = os.getenv('API_KEY')
 ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
 UPDATE_INTERVAL = 1800  # هر 30 دقیقه
 CHECK_INTERVAL = 300    # هر 5 دقیقه
-START_HOUR = 7          # ساعت 07:30 صبح UTC (معادل 11:00 تهران)
-END_HOUR = 16           # ساعت 16:30 عصر UTC (معادل 20:00 تهران)
+START_HOUR = 11         # ساعت 11 صبح تهران
+END_HOUR = 20           # ساعت 8 شب تهران
 TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساعت)
-CHANGE_THRESHOLD = 5.0  # آستانه تغییر قیمت (5٪)
+CHANGE_THRESHOLD = 3.0  # آستانه تغییر قیمت (3٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
@@ -93,6 +93,15 @@ start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
 last_update_time = 0
+
+def get_tehran_time():
+    """محاسبه ساعت و دقیقه تهران با اعمال TIME_OFFSET"""
+    current_time = datetime.now()
+    total_minutes = current_time.hour * 60 + current_time.minute + int(TIME_OFFSET * 60)
+    tehran_hour = total_minutes // 60 % 24
+    tehran_minute = total_minutes % 60
+    logger.info(f"⏰ زمان سرور: {current_time.strftime('%H:%M')} | زمان تهران: {tehran_hour:02d}:{tehran_minute:02d}")
+    return tehran_hour, tehran_minute
 
 def send_message(text, chat_id=None):
     """ارسال پیام به کانال یا ادمین"""
@@ -232,10 +241,11 @@ def send_holiday_notification():
 
 def send_start_notification():
     """ارسال اعلان شروع روز کاری و پیام به ادمین"""
+    tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
 📢 <b>شروع آپدیت قیمت‌ها!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {datetime.now().strftime('%H:%M')}
+⏰ ساعت: {tehran_hour:02d}:{tehran_minute:02d}
 هر 30 دقیقه قیمت‌های جدید طلا، سکه و ارز رو می‌فرستیم!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -256,10 +266,11 @@ def send_test_admin_message():
         logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، پیام تست ارسال نشد")
         return
     
+    tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
 🧪 <b>پیام تست برای ADMIN_CHAT_ID</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {datetime.now().strftime('%H:%M')}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 این پیام برای اطمینان از تنظیم درست ADMIN_CHAT_ID ارسال شده است.
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -269,10 +280,11 @@ def send_test_admin_message():
 
 def send_end_notification():
     """ارسال اعلان پایان روز کاری"""
+    tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
 📢 <b>پایان آپدیت قیمت‌ها!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {datetime.now().strftime('%H:%M')}
+⏰ ساعت: {tehran_hour:02d}:{tehran_minute:02d}
 آپدیت امروز تموم شد. فردا ساعت 11 صبح ادامه می‌دیم!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
@@ -340,10 +352,11 @@ def get_prices():
                         continue
 
             if significant_changes:
+                tehran_hour, tehran_minute = get_tehran_time()
                 emergency_message = f"""
-📢 <b>تغییر قیمت فوری!</b>
+📢 <b>خبر مهم از بازار!</b>
 📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {datetime.now().strftime('%H:%M')}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 """
                 for key, change_percent, new_price in significant_changes:
                     name = {
@@ -373,9 +386,10 @@ def get_prices():
 
 def create_message(prices):
     """ایجاد پیام قیمت‌ها"""
+    tehran_hour, tehran_minute = get_tehran_time()
     return f"""
 📅 <b>تاریخ: {get_jalali_date()}</b>
-⏰ <b>آخرین آپدیت: {prices['update_time']}</b>
+⏰ <b>آخرین آپدیت: {tehran_hour:02d}:{tehran_minute:02d}</b>
 
 📊 <b>قیمت‌های لحظه‌ای بازار</b>
 
@@ -407,18 +421,11 @@ def format_price(price):
         return "نامشخص"
 
 def is_within_update_hours():
-    """چک کردن بازه آپدیت با ساعت سرور"""
-    current_time = datetime.now()
-    # اعمال offset برای تبدیل به ساعت تهران
-    current_hour = (current_time.hour + int(TIME_OFFSET)) % 24
-    current_minute = current_time.minute + (TIME_OFFSET % 1 * 60)
-    if current_minute >= 60:
-        current_hour = (current_hour + 1) % 24
-        current_minute -= 60
-    # تنظیم ساعت تهران
-    tehran_time = f"{int(current_hour):02d}:{int(current_minute):02d}"
-    logger.info(f"⏰ زمان سرور: {current_time.strftime('%H:%M')} | زمان تهران: {tehran_time}")
-    return START_HOUR <= current_hour < END_HOUR
+    """چک کردن بازه آپدیت با ساعت تهران"""
+    tehran_hour, tehran_minute = get_tehran_time()
+    is_within_hours = START_HOUR <= tehran_hour < END_HOUR
+    logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - {'در بازه آپدیت' if is_within_hours else 'خارج از بازه آپدیت'}")
+    return is_within_hours
 
 def test_holiday(date_str):
     """تابع تست برای چک کردن تعطیلی یک تاریخ خاص"""
@@ -461,15 +468,10 @@ def main():
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
     
     while True:
-        current_time = datetime.now()
-        current_hour = (current_time.hour + int(TIME_OFFSET)) % 24
-        current_minute = current_time.minute + (TIME_OFFSET % 1 * 60)
-        if current_minute >= 60:
-            current_hour = (current_hour + 1) % 24
-            current_minute -= 60
+        tehran_hour, tehran_minute = get_tehran_time()
         
         # ریست پرچم‌ها در شروع روز (ساعت 00:00 تهران)
-        if current_hour == 0 and current_minute < 30:
+        if tehran_hour == 0 and tehran_minute < 30:
             start_notification_sent = False
             end_notification_sent = False
             last_holiday_notification = None
@@ -477,26 +479,26 @@ def main():
             logger.info("🔄 پرچم‌ها برای روز جدید ریست شدند")
         
         if is_holiday():
-            if (current_hour == START_HOUR and current_minute < 30 and 
+            if (tehran_hour == START_HOUR and tehran_minute < 30 and 
                 (last_holiday_notification is None or 
-                 last_holiday_notification.date() != current_time.date())):
+                 last_holiday_notification.date() != datetime.now().date())):
                 send_holiday_notification()
-                last_holiday_notification = current_time
+                last_holiday_notification = datetime.now()
             logger.info(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
             time.sleep(CHECK_INTERVAL)
         elif is_within_update_hours():
-            if current_hour == START_HOUR and current_minute < 30 and not start_notification_sent:
+            if tehran_hour == START_HOUR and tehran_minute < 30 and not start_notification_sent:
                 send_start_notification()
                 start_notification_sent = True
             
             # چک کردن فاصله زمانی از آخرین آپدیت
             if time.time() - last_update_time >= UPDATE_INTERVAL:
-                logger.info(f"⏰ زمان تهران: {current_hour:02d}:{int(current_minute):02d} - در بازه آپدیت")
+                logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
                 prices = get_prices()
                 if prices:
                     message = create_message(prices)
                     send_message(message)
-                    logger.info(f"✅ قیمت‌ها در {current_hour:02d}:{int(current_minute):02d} ارسال شدند")
+                    logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
                     last_update_time = time.time()
                 else:
                     logger.error("❌ خطا در دریافت قیمت‌ها")
@@ -504,11 +506,11 @@ def main():
                 logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
             time.sleep(CHECK_INTERVAL)
         else:
-            if current_hour == END_HOUR and current_minute < 30 and not end_notification_sent:
+            if tehran_hour == END_HOUR and tehran_minute < 30 and not end_notification_sent:
                 send_end_notification()
                 end_notification_sent = True
             
-            logger.info(f"⏰ زمان تهران: {current_hour:02d}:{int(current_minute):02d} - خارج از بازه آپدیت")
+            logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - خارج از بازه آپدیت")
             time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
