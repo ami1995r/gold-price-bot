@@ -4,7 +4,6 @@ import jdatetime
 import time
 import os
 import logging
-import matplotlib.pyplot as plt
 try:
     import pkg_resources
 except ImportError:
@@ -29,16 +28,11 @@ CHANGE_THRESHOLD = 3.0  # آستانه تغییر قیمت (3٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
 
-# لیست برای ذخیره تاریخچه قیمت دلار (حداکثر 5 روز)
-price_history = []
-date_history = []
-
 # لاگ نسخه‌های پکیج‌ها
 if pkg_resources:
     try:
         jdatetime_version = pkg_resources.get_distribution("jdatetime").version
-        matplotlib_version = pkg_resources.get_distribution("matplotlib").version
-        logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}, matplotlib={matplotlib_version}")
+        logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}")
     except Exception as e:
         logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 else:
@@ -50,7 +44,6 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
                                          ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
-    raise EnvironmentError(error_message)
 
 # لیست تعطیلات 1404 (جمعه‌ها + تعطیلات رسمی)
 HOLIDAYS = [
@@ -100,7 +93,6 @@ start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
 last_update_time = 0
-last_chart_sent = None
 
 def get_tehran_time():
     """محاسبه ساعت و دقیقه تهران با اعمال TIME_OFFSET"""
@@ -111,60 +103,27 @@ def get_tehran_time():
     logger.info(f"⏰ زمان سرور: {current_time.strftime('%H:%M')} | زمان تهران: {tehran_hour:02d}:{tehran_minute:02d}")
     return tehran_hour, tehran_minute
 
-def send_message(text, chat_id=None, photo=None):
-    """ارسال پیام یا عکس به کانال یا ادمین"""
+def send_message(text, chat_id=None):
+    """ارسال پیام به کانال یا ادمین"""
     try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         target_chat_id = chat_id or CHANNEL_ID
-        if photo:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-            logger.info(f"📤 در حال ارسال تصویر به chat_id={target_chat_id}")
-            with open(photo, 'rb') as photo_file:
-                files = {'photo': photo_file}
-                data = {'chat_id': target_chat_id, 'caption': text}
-                response = requests.post(url, files=files, data=data)
+        if chat_id == ADMIN_CHAT_ID or not CHANNEL_ID:
+            logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
+            response = requests.post(url, json={
+                'chat_id': target_chat_id,
+                'text': text,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': True
+            })
         else:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            if chat_id == ADMIN_CHAT_ID or not CHANNEL_ID:
-                logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
-                response = requests.post(url, json={
-                    'chat_id': target_chat_id,
-                    'text': text,
-                    'parse_mode': 'HTML',
-                    'disable_web_page_preview': True
-                })
-            else:
-                logger.info(f"⏭️ پیام به کانال {CHANNEL_ID} ارسال نشد (تنها برای ادمین)")
-                return
+            logger.info(f"⏭️ پیام به کانال {CHANNEL_ID} ارسال نشد (تنها برای ادمین)")
+            return
         logger.info(f"📥 پاسخ تلگرام: {response.text}")
         response.raise_for_status()
         logger.info("✅ پیام با موفقیت ارسال شد")
     except Exception as e:
         logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
-
-def create_price_chart():
-    """ایجاد نمودار قیمت دلار و ذخیره به‌صورت فایل PNG"""
-    if len(price_history) < 2:
-        logger.warning("⚠️ داده کافی برای ایجاد نمودار موجود نیست")
-        return None
-    try:
-        plt.figure(figsize=(8, 5))
-        plt.plot(date_history, price_history, marker='o', color='#FF6384', linewidth=2, markersize=8, label='قیمت دلار (تومان)')
-        plt.title('نوسان قیمت دلار', fontsize=14)
-        plt.xlabel('تاریخ', fontsize=12)
-        plt.ylabel('قیمت (تومان)', fontsize=12)
-        plt.grid(True)
-        plt.legend()
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        chart_path = "price_chart.png"
-        plt.savefig(chart_path)
-        plt.close()
-        logger.info(f"✅ نمودار قیمت ذخیره شد: {chart_path}")
-        return chart_path
-    except Exception as e:
-        logger.error(f"❌ خطا در ایجاد نمودار: {e}")
-        return None
 
 def get_jalali_date():
     """گرفتن تاریخ شمسی بدون منطقه زمانی"""
@@ -177,10 +136,12 @@ def is_holiday():
     gregorian_date = datetime.now().strftime("%Y-%m-%d")
     logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | تاریخ میلادی: {gregorian_date}")
 
+    # چک کردن استثناها
     if month_day in NON_HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
         return False
     
+    # چک کردن لیست تعطیلات
     if month_day in HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست تعطیلات یافت شد")
         send_suspicious_holiday_alert(today)
@@ -196,6 +157,7 @@ def send_suspicious_holiday_alert(today):
         logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، اعلان تعطیلات مشکوک ارسال نشد")
         return
     
+    # فقط یک بار در روز اعلان بفرست
     current_date = today.date()
     if last_suspicious_holiday_alert and last_suspicious_holiday_alert.date() == current_date:
         logger.info("⏭️ اعلان تعطیلات مشکوک قبلاً امروز ارسال شده، صرف‌نظر شد")
@@ -281,42 +243,11 @@ def send_holiday_notification():
     send_message(message)
     logger.info("✅ اعلان تعطیلات ارسال شد")
 
-def send_immediate_test_message():
-    """ارسال پیام تست فوری به ADMIN_CHAT_ID"""
-    if not ADMIN_CHAT_ID:
-        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، پیام تست فوری ارسال نشد")
-        return
-    
-    tehran_hour, tehran_minute = get_tehran_time()
-    message = f"""
-🚨 <b>پیام تست فوری</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-این پیام برای تست ارسال فوری به ADMIN_CHAT_ID فرستاده شده است.
-لطفاً دریافت این پیام را تأیید کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
-"""
-    logger.info(f"📤 در حال ارسال پیام تست فوری به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
-    send_message(message, chat_id=ADMIN_CHAT_ID)
-    logger.info("✅ پیام تست فوری به ادمین ارسال شد")
-
 def send_start_notification():
-    """ارسال پیام شروع به ادمین همراه با نمودار"""
-    global last_chart_sent
+    """ارسال پیام شروع به ادمین (بدون پیام به کانال)"""
     tehran_hour, tehran_minute = get_tehran_time()
     
     if ADMIN_CHAT_ID and not start_notification_sent:
-        current_date = datetime.now().date()
-        if last_chart_sent and last_chart_sent.date() == current_date:
-            logger.info("⏭️ نمودار قبلاً امروز ارسال شده، صرف‌نظر شد")
-        else:
-            chart_path = create_price_chart()
-            if chart_path:
-                send_message("📊 نمودار قیمت دلار:", chat_id=ADMIN_CHAT_ID, photo=chart_path)
-                last_chart_sent = datetime.now()
-            else:
-                send_message("⚠️ نمودار تولید نشد، داده کافی موجود نیست.", chat_id=ADMIN_CHAT_ID)
-        
         admin_message = f"""
 ✅ امروز پیام ارسال شد در روز {get_jalali_date()}
 ⏰ ساعت: {tehran_hour:02d}:{tehran_minute:02d}
@@ -345,7 +276,7 @@ def send_test_admin_message():
     logger.info("✅ پیام تست به ادمین ارسال شد")
 
 def send_end_notification():
-    """ارسال پیام پایان به ادمین"""
+    """ارسال پیام پایان به ادمین (بدون پیام به کانال)"""
     tehran_hour, tehran_minute = get_tehran_time()
     
     if ADMIN_CHAT_ID and not end_notification_sent:
@@ -397,23 +328,8 @@ def get_prices():
             'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
             'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
             'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
-            'usdt': find_item_by_symbol(data['currency'], "USDT_IRT") or {'price': 'N/A', 'change_percent': 0},
+            'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
-
-        # ذخیره قیمت دلار برای نمودار
-        if prices['usd']['price'] != 'N/A':
-            try:
-                usd_price = float(prices['usd']['price'])
-                current_date = datetime.now().strftime("%Y-%m-%d")
-                if len(price_history) == 0 or date_history[-1] != current_date:
-                    if len(price_history) >= 5:  # حداکثر 5 روز نگه می‌داریم
-                        price_history.pop(0)
-                        date_history.pop(0)
-                    price_history.append(usd_price)
-                    date_history.append(current_date)
-                    logger.info(f"💾 قیمت دلار ذخیره شد: {usd_price} در تاریخ {current_date}")
-            except (ValueError, TypeError) as e:
-                logger.error(f"❌ خطا در ذخیره قیمت دلار برای نمودار: {e}")
 
         if last_prices:
             current_time = time.time()
@@ -535,17 +451,16 @@ def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent
     global last_suspicious_holiday_alert, last_update_time
     
-    # ارسال پیام تست فوری
-    logger.info("🚨 ارسال پیام تست فوری به ADMIN_CHAT_ID")
-    send_immediate_test_message()
-    
+    # ارسال پیام تست به ADMIN_CHAT_ID
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
     send_test_admin_message()
     
+    # تست تعطیلی برای 14 اردیبهشت 1404
     logger.info("🔍 تست تعطیلی برای 1404/02/14")
     is_holiday_14_may = test_holiday("1404/02/14")
     logger.info(f"نتیجه تست: 1404/02/14 {'تعطیل است' if is_holiday_14_may else 'تعطیل نیست'}")
     
+    # تست تعطیلی برای یک جمعه (12 اردیبهشت 1404)
     logger.info("🔍 تست تعطیلی برای 1404/02/12")
     is_holiday_friday = test_holiday("1404/02/12")
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
@@ -553,6 +468,7 @@ def main():
     while True:
         tehran_hour, tehran_minute = get_tehran_time()
         
+        # ریست پرچم‌ها در شروع روز (ساعت 00:00 تهران)
         if tehran_hour == 0 and tehran_minute < 30:
             start_notification_sent = False
             end_notification_sent = False
@@ -573,6 +489,7 @@ def main():
                 send_start_notification()
                 start_notification_sent = True
             
+            # چک کردن فاصله زمانی از آخرین آپدیت
             if time.time() - last_update_time >= UPDATE_INTERVAL:
                 logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
                 prices = get_prices()
