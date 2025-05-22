@@ -4,6 +4,7 @@ import jdatetime
 import time
 import os
 import logging
+from PIL import Image, ImageDraw, ImageFont
 try:
     import pkg_resources
 except ImportError:
@@ -27,6 +28,13 @@ TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساع
 CHANGE_THRESHOLD = 3.0  # آستانه تغییر قیمت (3٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
 # =====================================================
+
+# نقشه جایگزینی متن‌ها در تمپلیت (تو باید این رو دقیق تنظیم کنی)
+PRICE_MAP = {
+    "YYYY/..": "usd",
+    "V/99/..": "coin_old",
+    "V/..": "update_time"
+}
 
 # لاگ نسخه‌های پکیج‌ها
 if pkg_resources:
@@ -103,18 +111,29 @@ def get_tehran_time():
     logger.info(f"⏰ زمان سرور: {current_time.strftime('%H:%M')} | زمان تهران: {tehran_hour:02d}:{tehran_minute:02d}")
     return tehran_hour, tehran_minute
 
-def send_message(text, chat_id=None):
-    """ارسال پیام به کانال یا ادمین"""
+def send_message(text, chat_id=None, photo=None):
+    """ارسال پیام یا عکس به کانال یا ادمین"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         target_chat_id = chat_id or CHANNEL_ID
-        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
-        response = requests.post(url, json={
-            'chat_id': target_chat_id,
-            'text': text,
-            'parse_mode': 'HTML',
-            'disable_web_page_preview': True
-        })
+        if photo:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+            files = {'photo': open(photo, 'rb')}
+            data = {'chat_id': target_chat_id, 'caption': text}
+            response = requests.post(url, files=files, data=data)
+        else:
+            # فقط به ادمین پیام بفرست، نه کانال
+            if chat_id == ADMIN_CHAT_ID or not CHANNEL_ID:
+                logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
+                response = requests.post(url, json={
+                    'chat_id': target_chat_id,
+                    'text': text,
+                    'parse_mode': 'HTML',
+                    'disable_web_page_preview': True
+                })
+            else:
+                logger.info(f"⏭️ پیام به کانال {CHANNEL_ID} ارسال نشد (تنها برای ادمین)")
+                return
         logger.info(f"📥 پاسخ تلگرام: {response.text}")
         response.raise_for_status()
         logger.info("✅ پیام با موفقیت ارسال شد")
@@ -240,17 +259,16 @@ def send_holiday_notification():
     logger.info("✅ اعلان تعطیلات ارسال شد")
 
 def send_start_notification():
-    """ارسال اعلان شروع روز کاری و پیام به ادمین"""
+    """ارسال تمپلیت با قیمت‌ها به ادمین (بدون پیام به کانال)"""
     tehran_hour, tehran_minute = get_tehran_time()
-    message = f"""
-📢 <b>شروع آپدیت قیمت‌ها!</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {tehran_hour:02d}:{tehran_minute:02d}
-هر 30 دقیقه قیمت‌های جدید طلا، سکه و ارز رو می‌فرستیم!
-▫️ @{CHANNEL_ID.replace('@', '')}
-"""
-    send_message(message)
-    logger.info("✅ اعلان شروع روز کاری ارسال شد")
+    
+    if ADMIN_CHAT_ID and not start_notification_sent:
+        prices = get_prices()
+        if prices:
+            updated_image = update_template_image(prices)
+            if updated_image:
+                send_message("تمپلیت قیمت‌ها:", chat_id=ADMIN_CHAT_ID, photo=updated_image)
+                logger.info("✅ تمپلیت با قیمت‌ها به ادمین ارسال شد")
     
     if ADMIN_CHAT_ID:
         admin_message = f"""
@@ -259,6 +277,7 @@ def send_start_notification():
         logger.info(f"📤 در حال ارسال پیام شروع روز به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
         send_message(admin_message, chat_id=ADMIN_CHAT_ID)
         logger.info("✅ پیام شروع روز به ادمین ارسال شد")
+    start_notification_sent = True
 
 def send_test_admin_message():
     """ارسال پیام تست به ADMIN_CHAT_ID برای اطمینان از تنظیمات"""
@@ -279,17 +298,56 @@ def send_test_admin_message():
     logger.info("✅ پیام تست به ادمین ارسال شد")
 
 def send_end_notification():
-    """ارسال اعلان پایان روز کاری"""
+    """ارسال پیام پایان به ادمین (بدون پیام به کانال)"""
     tehran_hour, tehran_minute = get_tehran_time()
-    message = f"""
-📢 <b>پایان آپدیت قیمت‌ها!</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ ساعت: {tehran_hour:02d}:{tehran_minute:02d}
-آپدیت امروز تموم شد. فردا ساعت 11 صبح ادامه می‌دیم!
-▫️ @{CHANNEL_ID.replace('@', '')}
+    
+    if ADMIN_CHAT_ID and not end_notification_sent:
+        admin_message = f"""
+✅ روز کاری به پایان رسید در تاریخ {get_jalali_date()}
 """
-    send_message(message)
-    logger.info("✅ اعلان پایان روز کاری ارسال شد")
+        logger.info(f"📤 در حال ارسال پیام پایان روز به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+        send_message(admin_message, chat_id=ADMIN_CHAT_ID)
+        logger.info("✅ پیام پایان روز به ادمین ارسال شد")
+    end_notification_sent = True
+
+def update_template_image(prices):
+    """ویرایش تمپلیت تصویر با قیمت‌های جدید"""
+    try:
+        template_path = "template.png"  # اسم فایل تمپلیتت رو اینجا بذار
+        if not os.path.exists(template_path):
+            logger.error(f"❌ فایل تمپلیت {template_path} پیدا نشد")
+            return None
+        
+        # باز کردن تصویر
+        img = Image.open(template_path).convert("RGBA")
+        draw = ImageDraw.Draw(img)
+        
+        # فونت برای متن (می‌تونی فونت دلخواهت رو جایگزین کنی)
+        font_size = 40
+        font = ImageFont.load_default()  # یا از یه فونت خاص مثل font = ImageFont.truetype("arial.ttf", font_size)
+        
+        # مختصات تقریبی برای جایگزینی (تو باید اینا رو تنظیم کنی)
+        positions = {
+            "YYYY/..": (50, 100),  # مختصات تقریبی برای دلار
+            "V/99/..": (50, 150),  # مختصات تقریبی برای سکه امامی
+            "V/..": (50, 200)      # مختصات تقریبی برای زمان آپدیت
+        }
+        
+        # جایگزینی متن‌ها
+        for placeholder, key in PRICE_MAP.items():
+            if key in prices:
+                price_text = format_price(prices[key]['price']) if key != "update_time" else prices[key]['update_time']
+                x, y = positions.get(placeholder, (50, 50))  # مختصات پیش‌فرض
+                draw.text((x, y), price_text, fill="black", font=font)
+        
+        # ذخیره تصویر جدید
+        output_path = "updated_template.png"
+        img.save(output_path, "PNG")
+        logger.info(f"✅ تصویر تمپلیت با قیمت‌ها ذخیره شد: {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"❌ خطا در ویرایش تمپلیت: {e}")
+        return None
 
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
