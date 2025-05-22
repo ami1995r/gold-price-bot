@@ -44,6 +44,7 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
                                          ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
+    raise EnvironmentError(error_message)
 
 # لیست تعطیلات 1404 (جمعه‌ها + تعطیلات رسمی)
 HOLIDAYS = [
@@ -108,17 +109,13 @@ def send_message(text, chat_id=None):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         target_chat_id = chat_id or CHANNEL_ID
-        if chat_id == ADMIN_CHAT_ID or not CHANNEL_ID:
-            logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
-            response = requests.post(url, json={
-                'chat_id': target_chat_id,
-                'text': text,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': True
-            })
-        else:
-            logger.info(f"⏭️ پیام به کانال {CHANNEL_ID} ارسال نشد (تنها برای ادمین)")
-            return
+        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
+        response = requests.post(url, json={
+            'chat_id': target_chat_id,
+            'text': text,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        })
         logger.info(f"📥 پاسخ تلگرام: {response.text}")
         response.raise_for_status()
         logger.info("✅ پیام با موفقیت ارسال شد")
@@ -136,12 +133,10 @@ def is_holiday():
     gregorian_date = datetime.now().strftime("%Y-%m-%d")
     logger.info(f"📅 تاریخ شمسی: {get_jalali_date()} | تاریخ میلادی: {gregorian_date}")
 
-    # چک کردن استثناها
     if month_day in NON_HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست استثناها - تعطیل نیست")
         return False
     
-    # چک کردن لیست تعطیلات
     if month_day in HOLIDAYS:
         logger.info(f"📅 {month_day} در لیست تعطیلات یافت شد")
         send_suspicious_holiday_alert(today)
@@ -157,7 +152,6 @@ def send_suspicious_holiday_alert(today):
         logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، اعلان تعطیلات مشکوک ارسال نشد")
         return
     
-    # فقط یک بار در روز اعلان بفرست
     current_date = today.date()
     if last_suspicious_holiday_alert and last_suspicious_holiday_alert.date() == current_date:
         logger.info("⏭️ اعلان تعطیلات مشکوک قبلاً امروز ارسال شده، صرف‌نظر شد")
@@ -242,6 +236,25 @@ def send_holiday_notification():
 """
     send_message(message)
     logger.info("✅ اعلان تعطیلات ارسال شد")
+
+def send_immediate_test_message():
+    """ارسال پیام تست فوری به CHANNEL_ID"""
+    if not CHANNEL_ID:
+        logger.warning("⚠️ CHANNEL_ID تنظیم نشده، پیام تست فوری ارسال نشد")
+        return
+    
+    tehran_hour, tehran_minute = get_tehran_time()
+    message = f"""
+🚨 <b>پیام تست فوری</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
+این پیام برای تست ارسال فوری به کانال فرستاده شده است.
+لطفاً دریافت این پیام را تأیید کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+"""
+    logger.info(f"📤 در حال ارسال پیام تست فوری به CHANNEL_ID={CHANNEL_ID}")
+    send_message(message)
+    logger.info("✅ پیام تست فوری به کانال ارسال شد")
 
 def send_start_notification():
     """ارسال پیام شروع به ادمین (بدون پیام به کانال)"""
@@ -451,16 +464,17 @@ def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent
     global last_suspicious_holiday_alert, last_update_time
     
-    # ارسال پیام تست به ADMIN_CHAT_ID
+    # ارسال پیام تست فوری به کانال
+    logger.info("🚨 ارسال پیام تست فوری به CHANNEL_ID")
+    send_immediate_test_message()
+    
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
     send_test_admin_message()
     
-    # تست تعطیلی برای 14 اردیبهشت 1404
     logger.info("🔍 تست تعطیلی برای 1404/02/14")
     is_holiday_14_may = test_holiday("1404/02/14")
     logger.info(f"نتیجه تست: 1404/02/14 {'تعطیل است' if is_holiday_14_may else 'تعطیل نیست'}")
     
-    # تست تعطیلی برای یک جمعه (12 اردیبهشت 1404)
     logger.info("🔍 تست تعطیلی برای 1404/02/12")
     is_holiday_friday = test_holiday("1404/02/12")
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
@@ -468,7 +482,6 @@ def main():
     while True:
         tehran_hour, tehran_minute = get_tehran_time()
         
-        # ریست پرچم‌ها در شروع روز (ساعت 00:00 تهران)
         if tehran_hour == 0 and tehran_minute < 30:
             start_notification_sent = False
             end_notification_sent = False
@@ -489,7 +502,6 @@ def main():
                 send_start_notification()
                 start_notification_sent = True
             
-            # چک کردن فاصله زمانی از آخرین آپدیت
             if time.time() - last_update_time >= UPDATE_INTERVAL:
                 logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
                 prices = get_prices()
