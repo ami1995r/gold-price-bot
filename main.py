@@ -37,7 +37,8 @@ date_history = []
 if pkg_resources:
     try:
         jdatetime_version = pkg_resources.get_distribution("jdatetime").version
-        logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}")
+        matplotlib_version = pkg_resources.get_distribution("matplotlib").version
+        logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}, matplotlib={matplotlib_version}")
     except Exception as e:
         logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 else:
@@ -49,6 +50,7 @@ if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
                                          ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
     error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
+    raise EnvironmentError(error_message)
 
 # لیست تعطیلات 1404 (جمعه‌ها + تعطیلات رسمی)
 HOLIDAYS = [
@@ -115,9 +117,11 @@ def send_message(text, chat_id=None, photo=None):
         target_chat_id = chat_id or CHANNEL_ID
         if photo:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-            files = {'photo': open(photo, 'rb')}
-            data = {'chat_id': target_chat_id, 'caption': text}
-            response = requests.post(url, files=files, data=data)
+            logger.info(f"📤 در حال ارسال تصویر به chat_id={target_chat_id}")
+            with open(photo, 'rb') as photo_file:
+                files = {'photo': photo_file}
+                data = {'chat_id': target_chat_id, 'caption': text}
+                response = requests.post(url, files=files, data=data)
         else:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
             if chat_id == ADMIN_CHAT_ID or not CHANNEL_ID:
@@ -139,6 +143,9 @@ def send_message(text, chat_id=None, photo=None):
 
 def create_price_chart():
     """ایجاد نمودار قیمت دلار و ذخیره به‌صورت فایل PNG"""
+    if len(price_history) < 2:
+        logger.warning("⚠️ داده کافی برای ایجاد نمودار موجود نیست")
+        return None
     try:
         plt.figure(figsize=(8, 5))
         plt.plot(date_history, price_history, marker='o', color='#FF6384', linewidth=2, markersize=8, label='قیمت دلار (تومان)')
@@ -274,13 +281,31 @@ def send_holiday_notification():
     send_message(message)
     logger.info("✅ اعلان تعطیلات ارسال شد")
 
+def send_immediate_test_message():
+    """ارسال پیام تست فوری به ADMIN_CHAT_ID"""
+    if not ADMIN_CHAT_ID:
+        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، پیام تست فوری ارسال نشد")
+        return
+    
+    tehran_hour, tehran_minute = get_tehran_time()
+    message = f"""
+🚨 <b>پیام تست فوری</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
+این پیام برای تست ارسال فوری به ADMIN_CHAT_ID فرستاده شده است.
+لطفاً دریافت این پیام را تأیید کنید!
+▫️ @{CHANNEL_ID.replace('@', '')}
+"""
+    logger.info(f"📤 در حال ارسال پیام تست فوری به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    send_message(message, chat_id=ADMIN_CHAT_ID)
+    logger.info("✅ پیام تست فوری به ادمین ارسال شد")
+
 def send_start_notification():
     """ارسال پیام شروع به ادمین همراه با نمودار"""
     global last_chart_sent
     tehran_hour, tehran_minute = get_tehran_time()
     
     if ADMIN_CHAT_ID and not start_notification_sent:
-        # فقط یک بار در روز نمودار بفرست
         current_date = datetime.now().date()
         if last_chart_sent and last_chart_sent.date() == current_date:
             logger.info("⏭️ نمودار قبلاً امروز ارسال شده، صرف‌نظر شد")
@@ -289,6 +314,8 @@ def send_start_notification():
             if chart_path:
                 send_message("📊 نمودار قیمت دلار:", chat_id=ADMIN_CHAT_ID, photo=chart_path)
                 last_chart_sent = datetime.now()
+            else:
+                send_message("⚠️ نمودار تولید نشد، داده کافی موجود نیست.", chat_id=ADMIN_CHAT_ID)
         
         admin_message = f"""
 ✅ امروز پیام ارسال شد در روز {get_jalali_date()}
@@ -370,7 +397,7 @@ def get_prices():
             'eur': find_item_by_symbol(data['currency'], 'EUR') or {'price': 'N/A', 'change_percent': 0},
             'gbp': find_item_by_symbol(data['currency'], 'GBP') or {'price': 'N/A', 'change_percent': 0},
             'aed': find_item_by_symbol(data['currency'], 'AED') or {'price': 'N/A', 'change_percent': 0},
-            'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
+            'usdt': find_item_by_symbol(data['currency'], "USDT_IRT") or {'price': 'N/A', 'change_percent': 0},
         }
 
         # ذخیره قیمت دلار برای نمودار
@@ -384,6 +411,7 @@ def get_prices():
                         date_history.pop(0)
                     price_history.append(usd_price)
                     date_history.append(current_date)
+                    logger.info(f"💾 قیمت دلار ذخیره شد: {usd_price} در تاریخ {current_date}")
             except (ValueError, TypeError) as e:
                 logger.error(f"❌ خطا در ذخیره قیمت دلار برای نمودار: {e}")
 
@@ -506,6 +534,10 @@ def test_holiday(date_str):
 def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent
     global last_suspicious_holiday_alert, last_update_time
+    
+    # ارسال پیام تست فوری
+    logger.info("🚨 ارسال پیام تست فوری به ADMIN_CHAT_ID")
+    send_immediate_test_message()
     
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
     send_test_admin_message()
