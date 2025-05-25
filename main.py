@@ -146,7 +146,7 @@ def is_holiday():
     return False
 
 def send_suspicious_holiday_alert(today):
-    """ارسال اعلان برای تعطیلات مشکوک"""
+    """ارسال اعلان برای تعطیلات مشکوک به ادمین"""
     global last_suspicious_holiday_alert
     if not ADMIN_CHAT_ID:
         logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، اعلان تعطیلات مشکوک ارسال نشد")
@@ -198,7 +198,7 @@ def send_suspicious_holiday_alert(today):
     logger.info("✅ اعلان تعطیلات مشکوک ارسال شد")
 
 def send_holiday_notification():
-    """ارسال اعلان تعطیلات"""
+    """ارسال اعلان تعطیلات به ادمین"""
     today = jdatetime.datetime.now()
     month_day = today.strftime("%m/%d")
     event_text = {
@@ -234,13 +234,14 @@ def send_holiday_notification():
 بازار بسته‌ست و آپدیت قیمت نداریم. روز کاری بعدی ساعت 11 صبح شروع می‌کنیم!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
-    send_message(message)
+    logger.info(f"📤 در حال ارسال اعلان تعطیلات به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    send_message(message, chat_id=ADMIN_CHAT_ID)
     logger.info("✅ اعلان تعطیلات ارسال شد")
 
 def send_immediate_test_message():
-    """ارسال پیام تست فوری به CHANNEL_ID"""
-    if not CHANNEL_ID:
-        logger.warning("⚠️ CHANNEL_ID تنظیم نشده، پیام تست فوری ارسال نشد")
+    """ارسال پیام تست فوری به ادمین"""
+    if not ADMIN_CHAT_ID:
+        logger.warning("⚠️ ADMIN_CHAT_ID تنظیم نشده، پیام تست فوری ارسال نشد")
         return
     
     tehran_hour, tehran_minute = get_tehran_time()
@@ -248,16 +249,17 @@ def send_immediate_test_message():
 🚨 <b>پیام تست فوری</b>
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-این پیام برای تست ارسال فوری به کانال فرستاده شده است.
+این پیام برای تست ارسال فوری فرستاده شده است.
 لطفاً دریافت این پیام را تأیید کنید!
 ▫️ @{CHANNEL_ID.replace('@', '')}
 """
-    logger.info(f"📤 در حال ارسال پیام تست فوری به CHANNEL_ID={CHANNEL_ID}")
-    send_message(message)
-    logger.info("✅ پیام تست فوری به کانال ارسال شد")
+    logger.info(f"📤 در حال ارسال پیام تست فوری به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    send_message(message, chat_id=ADMIN_CHAT_ID)
+    logger.info("✅ پیام تست فوری به ادمین ارسال شد")
 
 def send_start_notification():
-    """ارسال پیام شروع به ادمین (بدون پیام به کانال)"""
+    """ارسال پیام شروع به ادمین"""
+    global start_notification_sent
     tehran_hour, tehran_minute = get_tehran_time()
     
     if ADMIN_CHAT_ID and not start_notification_sent:
@@ -268,7 +270,7 @@ def send_start_notification():
         logger.info(f"📤 در حال ارسال پیام شروع روز به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
         send_message(admin_message, chat_id=ADMIN_CHAT_ID)
         logger.info("✅ پیام شروع روز به ادمین ارسال شد")
-    start_notification_sent = True
+        start_notification_sent = True
 
 def send_test_admin_message():
     """ارسال پیام تست به ADMIN_CHAT_ID برای اطمینان از تنظیمات"""
@@ -289,7 +291,8 @@ def send_test_admin_message():
     logger.info("✅ پیام تست به ادمین ارسال شد")
 
 def send_end_notification():
-    """ارسال پیام پایان به ادمین (بدون پیام به کانال)"""
+    """ارسال پیام پایان به ادمین"""
+    global end_notification_sent
     tehran_hour, tehran_minute = get_tehran_time()
     
     if ADMIN_CHAT_ID and not end_notification_sent:
@@ -300,7 +303,7 @@ def send_end_notification():
         logger.info(f"📤 در حال ارسال پیام پایان روز به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
         send_message(admin_message, chat_id=ADMIN_CHAT_ID)
         logger.info("✅ پیام پایان روز به ادمین ارسال شد")
-    end_notification_sent = True
+        end_notification_sent = True
 
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
@@ -386,7 +389,8 @@ def get_prices():
                     }.get(key, key)
                     emergency_message += f"{get_price_change_emoji(change_percent)} {name} به {format_price(new_price)} تومان رسید\n"
                 emergency_message += f"▫️ @{CHANNEL_ID.replace('@', '')}"
-                send_message(emergency_message)
+                logger.info(f"📤 در حال ارسال اعلان تغییر قیمت مهم به CHANNEL_ID={CHANNEL_ID}")
+                send_message(emergency_message)  # ارسال به کانال
                 last_emergency_update = current_time
 
         last_prices = prices
@@ -464,8 +468,8 @@ def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent
     global last_suspicious_holiday_alert, last_update_time
     
-    # ارسال پیام تست فوری به کانال
-    logger.info("🚨 ارسال پیام تست فوری به CHANNEL_ID")
+    # ارسال پیام تست فوری به ادمین
+    logger.info("🚨 ارسال پیام تست فوری به ADMIN_CHAT_ID")
     send_immediate_test_message()
     
     logger.info("🔍 ارسال پیام تست به ADMIN_CHAT_ID")
@@ -480,47 +484,49 @@ def main():
     logger.info(f"نتیجه تست: 1404/02/12 {'تعطیل است' if is_holiday_friday else 'تعطیل نیست'}")
     
     while True:
-        tehran_hour, tehran_minute = get_tehran_time()
-        
-        if tehran_hour == 0 and tehran_minute < 30:
-            start_notification_sent = False
-            end_notification_sent = False
-            last_holiday_notification = None
-            last_suspicious_holiday_alert = None
-            logger.info("🔄 پرچم‌ها برای روز جدید ریست شدند")
-        
-        if is_holiday():
-            if (tehran_hour == START_HOUR and tehran_minute < 30 and 
-                (last_holiday_notification is None or 
-                 last_holiday_notification.date() != datetime.now().date())):
-                send_holiday_notification()
-                last_holiday_notification = datetime.now()
-            logger.info(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
-            time.sleep(CHECK_INTERVAL)
-        elif is_within_update_hours():
-            if tehran_hour == START_HOUR and tehran_minute < 30 and not start_notification_sent:
-                send_start_notification()
-                start_notification_sent = True
+        try:
+            tehran_hour, tehran_minute = get_tehran_time()
             
-            if time.time() - last_update_time >= UPDATE_INTERVAL:
-                logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
-                prices = get_prices()
-                if prices:
-                    message = create_message(prices)
-                    send_message(message)
-                    logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
-                    last_update_time = time.time()
+            if tehran_hour == 0 and tehran_minute < 30:
+                start_notification_sent = False
+                end_notification_sent = False
+                last_holiday_notification = None
+                last_suspicious_holiday_alert = None
+                logger.info("🔄 پرچم‌ها برای روز جدید ریست شدند")
+            
+            if is_holiday():
+                if (tehran_hour == START_HOUR and tehran_minute < 30 and 
+                    (last_holiday_notification is None or 
+                     last_holiday_notification.date() != datetime.now().date())):
+                    send_holiday_notification()
+                    last_holiday_notification = datetime.now()
+                logger.info(f"📅 امروز: {get_jalali_date()} - روز تعطیل، آپدیت انجام نمی‌شود")
+                time.sleep(CHECK_INTERVAL)
+            elif is_within_update_hours():
+                if tehran_hour == START_HOUR and tehran_minute < 30 and not start_notification_sent:
+                    send_start_notification()
+                
+                if time.time() - last_update_time >= UPDATE_INTERVAL:
+                    logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
+                    prices = get_prices()
+                    if prices:
+                        message = create_message(prices)
+                        send_message(message)  # ارسال به کانال
+                        logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
+                        last_update_time = time.time()
+                    else:
+                        logger.error("❌ خطا در دریافت قیمت‌ها")
                 else:
-                    logger.error("❌ خطا در دریافت قیمت‌ها")
+                    logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
+                time.sleep(CHECK_INTERVAL)
             else:
-                logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
-            time.sleep(CHECK_INTERVAL)
-        else:
-            if tehran_hour == END_HOUR and tehran_minute < 30 and not end_notification_sent:
-                send_end_notification()
-                end_notification_sent = True
-            
-            logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - خارج از بازه آپدیت")
+                if tehran_hour == END_HOUR and tehran_minute < 30 and not end_notification_sent:
+                    send_end_notification()
+                
+                logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - خارج از بازه آپدیت")
+                time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            logger.error(f"❌ خطای غیرمنتظره در حلقه اصلی: {e}")
             time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
