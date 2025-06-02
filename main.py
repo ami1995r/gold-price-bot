@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import jdatetime
 import time
 import os
@@ -26,8 +26,7 @@ END_HOUR = 20           # ساعت 8 شب تهران
 TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساعت)
 CHANGE_THRESHOLD = 3.0  # آستانه تغییر قیمت (3٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
-TRIAL_END_DATE = "2025-06-22"  # تاریخ تقریبی اتمام تریال (قابل تنظیم)
-WARNING_DAYS = 2        # هشدار 2 روز قبل از اتمام
+TRIAL_CHECK_INTERVAL = 21600  # هر 6 ساعت (6 * 60 * 60)
 # =====================================================
 
 # لاگ نسخه‌های پکیج‌ها
@@ -96,6 +95,8 @@ start_notification_sent = False
 end_notification_sent = False
 last_suspicious_holiday_alert = None
 last_update_time = 0
+last_trial_check_time = 0
+trial_alert_sent = False
 
 def get_tehran_time():
     """محاسبه ساعت و دقیقه تهران با اعمال TIME_OFFSET"""
@@ -261,6 +262,53 @@ def send_immediate_test_message():
     send_message(message, chat_id=ADMIN_CHAT_ID)
     logger.info("✅ پیام تست فوری به ادمین ارسال شد")
 
+def send_trial_expiry_alert():
+    """ارسال پیام هشدار اتمام تریال به ادمین"""
+    global trial_alert_sent
+    if trial_alert_sent:
+        logger.info("⏭️ پیام هشدار اتمام تریال قبلاً ارسال شده، صرف‌نظر شد")
+        return
+    
+    tehran_hour, tehran_minute = get_tehran_time()
+    message = f"""
+⚠️ <b>هشدار اتمام تریال Railway!</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
+به نظر می‌رسد اکانت تریال Railway شما به پایان رسیده است.
+لطفاً به Railway مراجعه کنید و وضعیت اکانت را بررسی کنید!
+"""
+    logger.info(f"📤 در حال ارسال پیام هشدار اتمام تریال به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    if send_message(message, chat_id=ADMIN_CHAT_ID):
+        trial_alert_sent = True
+        logger.info("✅ پیام هشدار اتمام تریال ارسال شد")
+    else:
+        logger.error("❌ ارسال پیام هشدار اتمام تریال ناموفق بود")
+
+def check_trial_status():
+    """چک کردن وضعیت اکانت Railway با ارسال پیام تست"""
+    global last_trial_check_time
+    current_time = time.time()
+    
+    if current_time - last_trial_check_time < TRIAL_CHECK_INTERVAL:
+        logger.info("⏳ فاصله چک وضعیت اکانت کمتر از 6 ساعت است، منتظر می‌مانیم")
+        return
+    
+    tehran_hour, tehran_minute = get_tehran_time()
+    test_message = f"""
+🔔 <b>چک وضعیت اکانت Railway</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
+این پیام برای چک کردن وضعیت سرور ارسال شده است.
+"""
+    logger.info(f"📤 در حال ارسال پیام تست وضعیت به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    if not send_message(test_message, chat_id=ADMIN_CHAT_ID):
+        logger.warning("⚠️ ارسال پیام تست وضعیت ناموفق بود، احتمالاً اکانت تریال تمام شده است")
+        send_trial_expiry_alert()
+    else:
+        logger.info("✅ پیام تست وضعیت با موفقیت ارسال شد، سرور فعال است")
+    
+    last_trial_check_time = current_time
+
 def send_start_notification():
     """ارسال پیام شروع به ادمین"""
     global start_notification_sent
@@ -308,33 +356,6 @@ def send_end_notification():
         send_message(admin_message, chat_id=ADMIN_CHAT_ID)
         logger.info("✅ پیام پایان روز به ادمین ارسال شد")
         end_notification_sent = True
-
-def send_trial_warning():
-    """ارسال هشدار نزدیک اتمام تریال به ادمین"""
-    global trial_alert_sent
-    if trial_alert_sent:
-        logger.info("⏭️ پیام هشدار اتمام تریال قبلاً ارسال شده، صرف‌نظر شد")
-        return
-    
-    trial_end = datetime.strptime(TRIAL_END_DATE, "%Y-%m-%d")
-    today = datetime.now()
-    days_left = (trial_end - today).days
-    
-    if 0 < days_left <= WARNING_DAYS:
-        tehran_hour, tehran_minute = get_tehran_time()
-        message = f"""
-⚠️ <b>هشدار نزدیک اتمام تریال Railway!</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-به نظر می‌رسد اکانت تریال Railway شما در {days_left} روز دیگر (حدود {TRIAL_END_DATE}) تمام می‌شود.
-لطفاً برای تمدید یا انتقال به پلتفرم دیگر اقدام کنید!
-"""
-        logger.info(f"📤 در حال ارسال پیام هشدار اتمام تریال به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
-        if send_message(message, chat_id=ADMIN_CHAT_ID):
-            trial_alert_sent = True
-            logger.info("✅ پیام هشدار اتمام تریال ارسال شد")
-        else:
-            logger.error("❌ ارسال پیام هشدار اتمام تریال ناموفق بود")
 
 def get_price_change_emoji(change_percent):
     """تعیین ایموجی تغییر قیمت"""
@@ -518,8 +539,8 @@ def main():
         try:
             tehran_hour, tehran_minute = get_tehran_time()
             
-            # چک کردن هشدار اتمام تریال
-            send_trial_warning()
+            # چک کردن وضعیت اکانت Railway
+            check_trial_status()
             
             if tehran_hour == 0 and tehran_minute < 30:
                 start_notification_sent = False
