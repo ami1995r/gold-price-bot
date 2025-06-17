@@ -26,7 +26,9 @@ END_HOUR = 20           # ساعت 8 شب تهران
 TIME_OFFSET = 3.5       # اختلاف ساعت تهران با UTC (در ساعت)
 CHANGE_THRESHOLD = 3.0  # آستانه تغییر قیمت (3٪)
 MIN_EMERGENCY_INTERVAL = 300  # حداقل فاصله آپدیت فوری
-TRIAL_CHECK_INTERVAL = 21600  # هر 6 ساعت (6 * 60 * 60)
+MARKET_CLOSED = True    # وضعیت بازار (ابتدا بسته فرض می‌شود)
+LAST_GOLD_PRICE = None  # برای مقایسه تغییر قیمت
+MARKET_CLOSED_MESSAGE_SENT = False  # پرچم برای ارسال یک‌بار پیام
 # =====================================================
 
 # لاگ نسخه‌های پکیج‌ها
@@ -86,17 +88,6 @@ NON_HOLIDAYS = [
     "02/10",  # 10 اردیبهشت
     "02/14",  # 14 اردیبهشت
 ]
-
-# ذخیره قیمت‌ها و متغیرهای جهانی
-last_prices = None
-last_emergency_update = 0
-last_holiday_notification = None
-start_notification_sent = False
-end_notification_sent = False
-last_suspicious_holiday_alert = None
-last_update_time = 0
-last_trial_check_time = 0
-trial_alert_sent = False
 
 def get_tehran_time():
     """محاسبه ساعت و دقیقه تهران با اعمال TIME_OFFSET"""
@@ -262,53 +253,6 @@ def send_immediate_test_message():
     send_message(message, chat_id=ADMIN_CHAT_ID)
     logger.info("✅ پیام تست فوری به ادمین ارسال شد")
 
-def send_trial_expiry_alert():
-    """ارسال پیام هشدار اتمام تریال به ادمین"""
-    global trial_alert_sent
-    if trial_alert_sent:
-        logger.info("⏭️ پیام هشدار اتمام تریال قبلاً ارسال شده، صرف‌نظر شد")
-        return
-    
-    tehran_hour, tehran_minute = get_tehran_time()
-    message = f"""
-⚠️ <b>هشدار اتمام تریال Railway!</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-به نظر می‌رسد اکانت تریال Railway شما به پایان رسیده است.
-لطفاً به Railway مراجعه کنید و وضعیت اکانت را بررسی کنید!
-"""
-    logger.info(f"📤 در حال ارسال پیام هشدار اتمام تریال به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
-    if send_message(message, chat_id=ADMIN_CHAT_ID):
-        trial_alert_sent = True
-        logger.info("✅ پیام هشدار اتمام تریال ارسال شد")
-    else:
-        logger.error("❌ ارسال پیام هشدار اتمام تریال ناموفق بود")
-
-def check_trial_status():
-    """چک کردن وضعیت اکانت Railway با ارسال پیام تست"""
-    global last_trial_check_time
-    current_time = time.time()
-    
-    if current_time - last_trial_check_time < TRIAL_CHECK_INTERVAL:
-        logger.info("⏳ فاصله چک وضعیت اکانت کمتر از 6 ساعت است، منتظر می‌مانیم")
-        return
-    
-    tehran_hour, tehran_minute = get_tehran_time()
-    test_message = f"""
-🔔 <b>چک وضعیت اکانت Railway</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-این پیام برای چک کردن وضعیت سرور ارسال شده است.
-"""
-    logger.info(f"📤 در حال ارسال پیام تست وضعیت به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
-    if not send_message(test_message, chat_id=ADMIN_CHAT_ID):
-        logger.warning("⚠️ ارسال پیام تست وضعیت ناموفق بود، احتمالاً اکانت تریال تمام شده است")
-        send_trial_expiry_alert()
-    else:
-        logger.info("✅ پیام تست وضعیت با موفقیت ارسال شد، سرور فعال است")
-    
-    last_trial_check_time = current_time
-
 def send_start_notification():
     """ارسال پیام شروع به ادمین"""
     global start_notification_sent
@@ -372,7 +316,7 @@ def find_item_by_symbol(items, symbol):
     return None
 
 def get_prices():
-    global last_prices, last_emergency_update
+    global LAST_GOLD_PRICE
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
         logger.info(f"📡 ارسال درخواست به API: {url}")
@@ -399,53 +343,20 @@ def get_prices():
             'usdt': find_item_by_symbol(data['currency'], 'USDT_IRT') or {'price': 'N/A', 'change_percent': 0},
         }
 
-        if last_prices:
-            current_time = time.time()
-            significant_changes = []
-            for key in prices:
-                if key == 'update_time':
-                    continue
-                new_price = prices[key]['price']
-                old_price = last_prices[key]['price']
-                if new_price != 'N/A' and old_price != 'N/A':
-                    try:
-                        new_price = float(new_price)
-                        old_price = float(old_price)
-                        change_percent = ((new_price - old_price) / old_price) * 100
-                        if abs(change_percent) > CHANGE_THRESHOLD and (current_time - last_emergency_update) > MIN_EMERGENCY_INTERVAL:
-                            significant_changes.append((key, change_percent, new_price))
-                    except (ValueError, TypeError):
-                        continue
+        # بررسی تغییر قیمت طلا برای فعال‌سازی آپدیت
+        current_gold_18k = prices['gold_18k']['price']
+        if LAST_GOLD_PRICE is not None and current_gold_18k != 'N/A' and LAST_GOLD_PRICE != 'N/A':
+            try:
+                current_price = float(current_gold_18k)
+                last_price = float(LAST_GOLD_PRICE)
+                if abs((current_price - last_price) / last_price * 100) > 0.5:  # تغییر حداقل 0.5٪
+                    global MARKET_CLOSED
+                    MARKET_CLOSED = False
+                    logger.info("📈 تغییر قیمت طلا تشخیص داده شد، بازار به حالت آپدیت برگشت")
+            except (ValueError, TypeError):
+                pass
+        LAST_GOLD_PRICE = current_gold_18k
 
-            if significant_changes:
-                tehran_hour, tehran_minute = get_tehran_time()
-                emergency_message = f"""
-📢 <b>خبر مهم از بازار!</b>
-📅 تاریخ: {get_jalali_date()}
-⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
-"""
-                for key, change_percent, new_price in significant_changes:
-                    name = {
-                        'gold_ounce': 'انس جهانی',
-                        'gold_18k': 'طلای 18 عیار',
-                        'coin_new': 'سکه بهار',
-                        'coin_old': 'سکه امامی',
-                        'half_coin': 'نیم سکه',
-                        'quarter_coin': 'ربع سکه',
-                        'gram_coin': 'سکه گرمی',
-                        'usd': 'دلار',
-                        'eur': 'یورو',
-                        'gbp': 'پوند',
-                        'aed': 'درهم',
-                        'usdt': 'تتر'
-                    }.get(key, key)
-                    emergency_message += f"{get_price_change_emoji(change_percent)} {name} به {format_price(new_price)} تومان رسید\n"
-                emergency_message += f"▫️ @{CHANNEL_ID.replace('@', '')}"
-                logger.info(f"📤 در حال ارسال اعلان تغییر قیمت مهم به CHANNEL_ID={CHANNEL_ID}")
-                send_message(emergency_message)  # ارسال به کانال
-                last_emergency_update = current_time
-
-        last_prices = prices
         return prices
     except Exception as e:
         logger.error(f"❌ خطا در دریافت داده قیمت‌ها: {e}")
@@ -518,7 +429,7 @@ def test_holiday(date_str):
 
 def main():
     global last_holiday_notification, start_notification_sent, end_notification_sent
-    global last_suspicious_holiday_alert, last_update_time, trial_alert_sent
+    global last_suspicious_holiday_alert, last_update_time, MARKET_CLOSED, MARKET_CLOSED_MESSAGE_SENT
     
     # ارسال پیام تست فوری به ادمین
     logger.info("🚨 ارسال پیام تست فوری به ADMIN_CHAT_ID")
@@ -539,15 +450,12 @@ def main():
         try:
             tehran_hour, tehran_minute = get_tehran_time()
             
-            # چک کردن وضعیت اکانت Railway
-            check_trial_status()
-            
             if tehran_hour == 0 and tehran_minute < 30:
                 start_notification_sent = False
                 end_notification_sent = False
                 last_holiday_notification = None
                 last_suspicious_holiday_alert = None
-                trial_alert_sent = False
+                MARKET_CLOSED_MESSAGE_SENT = False  # ریست پرچم پیام بازار بسته
                 logger.info("🔄 پرچم‌ها برای روز جدید ریست شدند")
             
             if is_holiday():
@@ -562,18 +470,31 @@ def main():
                 if tehran_hour == START_HOUR and tehran_minute < 30 and not start_notification_sent:
                     send_start_notification()
                 
-                if time.time() - last_update_time >= UPDATE_INTERVAL:
-                    logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
-                    prices = get_prices()
-                    if prices:
-                        message = create_message(prices)
-                        send_message(message)  # ارسال به کانال
-                        logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
-                        last_update_time = time.time()
-                    else:
-                        logger.error("❌ خطا در دریافت قیمت‌ها")
+                if MARKET_CLOSED:
+                    if not MARKET_CLOSED_MESSAGE_SENT:
+                        message = """
+📢 <b>اطلاعیه</b>
+📅 تاریخ: 1404/03/27
+🔔 بازار طلا به دلیل مسائل اخیر بسته است و قیمت‌ها تا اطلاع ثانوی آپدیت نمی‌شوند. در صورت تغییر قیمت، کانال دوباره فعال خواهد شد.
+▫️ @shervingold
+"""
+                        logger.info(f"📤 در حال ارسال پیام بسته بودن بازار به CHANNEL_ID={CHANNEL_ID}")
+                        send_message(message)
+                        MARKET_CLOSED_MESSAGE_SENT = True
+                        logger.info("✅ پیام بسته بودن بازار ارسال شد")
                 else:
-                    logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
+                    if time.time() - last_update_time >= UPDATE_INTERVAL:
+                        logger.info(f"⏰ زمان تهران: {tehran_hour:02d}:{tehran_minute:02d} - در بازه آپدیت")
+                        prices = get_prices()
+                        if prices:
+                            message = create_message(prices)
+                            send_message(message)  # ارسال به کانال
+                            logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
+                            last_update_time = time.time()
+                        else:
+                            logger.error("❌ خطا در دریافت قیمت‌ها")
+                    else:
+                        logger.info(f"⏳ منتظر فاصله 30 دقیقه‌ای برای آپدیت بعدی")
                 time.sleep(CHECK_INTERVAL)
             else:
                 if tehran_hour == END_HOUR and tehran_minute < 30 and not end_notification_sent:
