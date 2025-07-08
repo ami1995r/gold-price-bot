@@ -5,10 +5,10 @@ import time
 import os
 import logging
 try:
-    import pkg_resources
+    from importlib.metadata import distribution
 except ImportError:
-    logging.error("❌ ماژول pkg_resources پیدا نشد. لطفاً مطمئن شوید که setuptools نصب شده است.")
-    pkg_resources = None
+    logging.error("❌ ماژول importlib.metadata پیدا نشد. لطفاً از پایتون 3.8 یا بالاتر استفاده کنید.")
+    distribution = None
 
 # تنظیم لاگ‌گذاری
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,14 +30,14 @@ TRIAL_CHECK_INTERVAL = 21600  # هر 6 ساعت (6 * 60 * 60)
 # =====================================================
 
 # لاگ نسخه‌های پکیج‌ها
-if pkg_resources:
+if distribution:
     try:
-        jdatetime_version = pkg_resources.get_distribution("jdatetime").version
+        jdatetime_version = distribution('jdatetime').version
         logger.info(f"📦 نسخه پکیج‌ها: jdatetime={jdatetime_version}")
     except Exception as e:
         logger.error(f"❌ خطا در بررسی نسخه پکیج‌ها: {e}")
 else:
-    logger.warning("⚠️ pkg_resources در دسترس نیست، نسخه پکیج‌ها بررسی نشد")
+    logger.warning("⚠️ importlib.metadata در دسترس نیست، نسخه پکیج‌ها بررسی نشد")
 
 # چک کردن متغیرهای محیطی
 if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
@@ -376,7 +376,11 @@ def get_prices():
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
         logger.info(f"📡 ارسال درخواست به API: {url}")
-        response = requests.get(url, timeout=10)
+        # اضافه کردن User-Agent معتبر برای جلوگیری از مسدود شدن توسط 6G Firewall
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         logger.info(f"📥 داده‌های API دریافت شد: {data}")
