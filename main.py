@@ -19,6 +19,8 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 API_KEY = os.getenv('API_KEY')
 ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
+WHATSAPP_TOKEN = os.getenv('WHATSAPP_TOKEN', 'K4KIIXCfnPrp9pu6rCb8crIo87LYSVyv')
+WHATSAPP_PHONE = os.getenv('WHATSAPP_PHONE')
 UPDATE_INTERVAL = 1800  # هر 30 دقیقه
 CHECK_INTERVAL = 300    # هر 5 دقیقه
 START_HOUR = 11         # ساعت 11 صبح تهران
@@ -40,10 +42,9 @@ else:
     logger.warning("⚠️ importlib.metadata در دسترس نیست، نسخه پکیج‌ها بررسی نشد")
 
 # چک کردن متغیرهای محیطی
-if not all([TELEGRAM_TOKEN, CHANNEL_ID, API_KEY, ADMIN_CHAT_ID]):
-    missing_vars = [var for var, val in [('TELEGRAM_TOKEN', TELEGRAM_TOKEN), ('CHANNEL_ID', CHANNEL_ID), 
-                                         ('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
-    error_message = f"❌ متغیرهای محیطی تنظیم نشده‌اند: {', '.join(missing_vars)}"
+if not all([API_KEY, ADMIN_CHAT_ID]):
+    missing_vars = [var for var, val in [('API_KEY', API_KEY), ('ADMIN_CHAT_ID', ADMIN_CHAT_ID)] if not val]
+    error_message = f"❌ متغیرهای الزامی تنظیم نشده‌اند: {', '.join(missing_vars)}"
     logger.error(error_message)
     raise EnvironmentError(error_message)
 
@@ -108,24 +109,50 @@ def get_tehran_time():
     return tehran_hour, tehran_minute
 
 def send_message(text, chat_id=None):
-    """ارسال پیام به کانال یا ادمین"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        target_chat_id = chat_id or CHANNEL_ID
-        logger.info(f"📤 در حال ارسال پیام به chat_id={target_chat_id}")
-        response = requests.post(url, json={
-            'chat_id': target_chat_id,
-            'text': text,
-            'parse_mode': 'HTML',
-            'disable_web_page_preview': True
-        })
-        logger.info(f"📥 پاسخ تلگرام: {response.text}")
-        response.raise_for_status()
-        logger.info("✅ پیام با موفقیت ارسال شد")
-        return True
-    except Exception as e:
-        logger.error(f"❌ ارسال پیام ناموفق به chat_id={target_chat_id}: {e}")
-        return False
+    """ارسال پیام به تلگرام و واتس‌اپ به صورت همزمان"""
+    success = False
+    
+    # ارسال به تلگرام (اگه توکن تنظیم شده باشه)
+    if TELEGRAM_TOKEN and CHANNEL_ID:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {
+                'chat_id': CHANNEL_ID if not chat_id else chat_id,
+                'text': text,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': True
+            }
+            logger.info(f"📤 در حال ارسال پیام به تلگرام: {CHANNEL_ID if not chat_id else chat_id}")
+            response = requests.post(url, json=payload, timeout=10)
+            logger.info(f"📥 پاسخ تلگرام: {response.text}")
+            response.raise_for_status()
+            logger.info("✅ پیام به تلگرام ارسال شد")
+            success = True
+        except Exception as e:
+            logger.error(f"❌ ارسال پیام به تلگرام ناموفق: {e}")
+    
+    # ارسال به واتس‌اپ (اگه توکن و شماره تنظیم شده باشه)
+    if WHATSAPP_TOKEN and WHATSAPP_PHONE:
+        try:
+            url = f"https://api.whapi.cloud/messages/text"
+            headers = {
+                "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "to": WHATSAPP_PHONE if not chat_id else chat_id,
+                "body": text  # واتس‌اپ از HTML پشتیبانی نمی‌کنه، متن ساده می‌فرسته
+            }
+            logger.info(f"📤 در حال ارسال پیام به واتس‌اپ: {WHATSAPP_PHONE if not chat_id else chat_id}")
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            logger.info(f"📥 پاسخ واتس‌اپ: {response.text}")
+            response.raise_for_status()
+            logger.info("✅ پیام به واتس‌اپ ارسال شد")
+            success = True
+        except Exception as e:
+            logger.error(f"❌ ارسال پیام به واتس‌اپ ناموفق: {e}")
+    
+    return success
 
 def get_jalali_date():
     """گرفتن تاریخ شمسی بدون منطقه زمانی"""
@@ -190,12 +217,12 @@ def send_suspicious_holiday_alert(today):
     }.get(month_day, "نامشخص")
     
     message = f"""
-⚠️ <b>هشدار تعطیلات مشکوک!</b>
+⚠️ هشدار تعطیلات مشکوک!
 📅 تاریخ: {get_jalali_date()}
 🔔 روز {today.strftime('%Y/%m/%d')} به عنوان تعطیل تشخیص داده شد
 مناسبت: {event_text}
 لطفاً بررسی کنید که آیا این روز واقعاً تعطیل است!
-▫️ @{CHANNEL_ID.replace('@', '')}
+▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}
 """
     logger.info(f"📤 در حال ارسال اعلان تعطیلات مشکوک به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
     send_message(message, chat_id=ADMIN_CHAT_ID)
@@ -233,11 +260,11 @@ def send_holiday_notification():
     }.get(month_day, "تعطیل رسمی")
     
     message = f"""
-📢 <b>امروز تعطیله!</b>
+📢 امروز تعطیله!
 📅 تاریخ: {get_jalali_date()}
 🔔 مناسبت: {event_text}
 بازار بسته‌ست و آپدیت قیمت نداریم. روز کاری بعدی ساعت 11 صبح شروع می‌کنیم!
-▫️ @{CHANNEL_ID.replace('@', '')}
+▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}
 """
     logger.info(f"📤 در حال ارسال اعلان تعطیلات به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
     send_message(message, chat_id=ADMIN_CHAT_ID)
@@ -251,12 +278,12 @@ def send_immediate_test_message():
     
     tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
-🚨 <b>پیام تست فوری</b>
+🚨 پیام تست فوری
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 این پیام برای تست ارسال فوری فرستاده شده است.
 لطفاً دریافت این پیام را تأیید کنید!
-▫️ @{CHANNEL_ID.replace('@', '')}
+▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}
 """
     logger.info(f"📤 در حال ارسال پیام تست فوری به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
     send_message(message, chat_id=ADMIN_CHAT_ID)
@@ -271,7 +298,7 @@ def send_trial_expiry_alert():
     
     tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
-⚠️ <b>هشدار اتمام تریال Railway!</b>
+⚠️ هشدار اتمام تریال Railway!
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 به نظر می‌رسد اکانت تریال Railway شما به پایان رسیده است.
@@ -295,7 +322,7 @@ def check_trial_status():
     
     tehran_hour, tehran_minute = get_tehran_time()
     test_message = f"""
-🔔 <b>چک وضعیت اکانت Railway</b>
+🔔 چک وضعیت اکانت Railway
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 این پیام برای چک کردن وضعیت سرور ارسال شده است.
@@ -332,11 +359,11 @@ def send_test_admin_message():
     
     tehran_hour, tehran_minute = get_tehran_time()
     message = f"""
-🧪 <b>پیام تست برای ADMIN_CHAT_ID</b>
+🧪 پیام تست برای ADMIN_CHAT_ID
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 این پیام برای اطمینان از تنظیم درست ADMIN_CHAT_ID ارسال شده است.
-▫️ @{CHANNEL_ID.replace('@', '')}
+▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}
 """
     logger.info(f"📤 در حال ارسال پیام تست به ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
     send_message(message, chat_id=ADMIN_CHAT_ID)
@@ -376,7 +403,6 @@ def get_prices():
     try:
         url = f'https://brsapi.ir/Api/Market/Gold_Currency.php?key={API_KEY}'
         logger.info(f"📡 ارسال درخواست به API: {url}")
-        # اضافه کردن User-Agent معتبر برای جلوگیری از مسدود شدن توسط 6G Firewall
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -424,7 +450,7 @@ def get_prices():
             if significant_changes:
                 tehran_hour, tehran_minute = get_tehran_time()
                 emergency_message = f"""
-📢 <b>خبر مهم از بازار!</b>
+📢 خبر مهم از بازار!
 📅 تاریخ: {get_jalali_date()}
 ⏰ زمان: {tehran_hour:02d}:{tehran_minute:02d}
 """
@@ -444,9 +470,9 @@ def get_prices():
                         'usdt': 'تتر'
                     }.get(key, key)
                     emergency_message += f"{get_price_change_emoji(change_percent)} {name} به {format_price(new_price)} تومان رسید\n"
-                emergency_message += f"▫️ @{CHANNEL_ID.replace('@', '')}"
-                logger.info(f"📤 در حال ارسال اعلان تغییر قیمت مهم به CHANNEL_ID={CHANNEL_ID}")
-                send_message(emergency_message)  # ارسال به کانال
+                emergency_message += f"▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}"
+                logger.info(f"📤 در حال ارسال اعلان تغییر قیمت مهم")
+                send_message(emergency_message)
                 last_emergency_update = current_time
 
         last_prices = prices
@@ -459,30 +485,30 @@ def create_message(prices):
     """ایجاد پیام قیمت‌ها"""
     tehran_hour, tehran_minute = get_tehran_time()
     return f"""
-📅 <b>تاریخ: {get_jalali_date()}</b>
-⏰ <b>آخرین آپدیت: {tehran_hour:02d}:{tehran_minute:02d}</b>
+📅 تاریخ: {get_jalali_date()}
+⏰ آخرین آپدیت: {tehran_hour:02d}:{tehran_minute:02d}
 
-📊 <b>قیمت‌های لحظه‌ای بازار</b>
+📊 قیمت‌های لحظه‌ای بازار
 
-<b>طلا</b>
+طلا
 {get_price_change_emoji(prices['gold_ounce']['change_percent'])} انس جهانی: {prices['gold_ounce']['price']}
 {get_price_change_emoji(prices['gold_18k']['change_percent'])} 18 عیار: {format_price(prices['gold_18k']['price'])} تومان
 
-<b>سکه</b>
+سکه
 {get_price_change_emoji(prices['coin_old']['change_percent'])} تمام امامی: {format_price(prices['coin_old']['price'])} تومان
 {get_price_change_emoji(prices['coin_new']['change_percent'])} تمام بهار: {format_price(prices['coin_new']['price'])} تومان
-{get_price_change_emoji(prices['gold_18k']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
+{get_price_change_emoji(prices['half_coin']['change_percent'])} نیم سکه: {format_price(prices['half_coin']['price'])} تومان
 {get_price_change_emoji(prices['quarter_coin']['change_percent'])} ربع سکه: {format_price(prices['quarter_coin']['price'])} تومان
 {get_price_change_emoji(prices['gram_coin']['change_percent'])} سکه گرمی: {format_price(prices['gram_coin']['price'])} تومان
 
-<b>ارزها</b>
+ارزها
 {get_price_change_emoji(prices['usd']['change_percent'])} دلار: {format_price(prices['usd']['price'])} تومان
 {get_price_change_emoji(prices['usdt']['change_percent'])} تتر: {format_price(prices['usdt']['price'])} تومان
 {get_price_change_emoji(prices['eur']['change_percent'])} یورو: {format_price(prices['eur']['price'])} تومان
 {get_price_change_emoji(prices['gbp']['change_percent'])} پوند: {format_price(prices['gbp']['price'])} تومان
 {get_price_change_emoji(prices['aed']['change_percent'])} درهم: {format_price(prices['aed']['price'])} تومان
 
-▫️ @{CHANNEL_ID.replace('@', '')}
+▫️ {CHANNEL_ID if CHANNEL_ID else WHATSAPP_PHONE}
 """
 
 def format_price(price):
@@ -571,7 +597,7 @@ def main():
                     prices = get_prices()
                     if prices:
                         message = create_message(prices)
-                        send_message(message)  # ارسال به کانال
+                        send_message(message)  # ارسال همزمان به تلگرام و واتس‌اپ
                         logger.info(f"✅ قیمت‌ها در {tehran_hour:02d}:{tehran_minute:02d} ارسال شدند")
                         last_update_time = time.time()
                     else:
